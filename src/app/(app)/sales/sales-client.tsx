@@ -46,7 +46,6 @@ interface ExistingSale {
 interface BulkRow {
   id: string; // local key
   product_id: string;
-  sale_date: string;
   quantity: string;
   quantity_boxes: string;
   unit_price: string;
@@ -57,7 +56,6 @@ interface BulkRow {
 const newBulkRow = (): BulkRow => ({
   id: crypto.randomUUID(),
   product_id: "",
-  sale_date: new Date().toISOString().split("T")[0],
   quantity: "",
   quantity_boxes: "0",
   unit_price: "",
@@ -116,6 +114,7 @@ export function SalesClient({ products, initialSales }: { products: Product[]; i
   // Bulk sale state
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkRows, setBulkRows] = useState<BulkRow[]>([newBulkRow()]);
+  const [bulkDate, setBulkDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [bulkNotes, setBulkNotes] = useState("");
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkResults, setBulkResults] = useState<{ id: string; ok: boolean; msg?: string }[]>([]);
@@ -237,7 +236,7 @@ export function SalesClient({ products, initialSales }: { products: Product[]; i
       const { data: sale, error: saleErr } = await supabase
         .from("sales")
         .insert({
-          sale_date: row.sale_date || today, recorded_by: profile!.id,
+          sale_date: bulkDate || today, recorded_by: profile!.id,
           total_amount: total, discount_amount: disc,
           payment_method: row.payment_method,
           notes: bulkNotes || null, is_deleted: false,
@@ -284,6 +283,7 @@ export function SalesClient({ products, initialSales }: { products: Product[]; i
       toast({ title: `${saved} order${saved > 1 ? "s" : ""} saved` });
       setBulkOpen(false);
       setBulkRows([newBulkRow()]);
+      setBulkDate(today);
       setBulkNotes("");
       setBulkResults([]);
     } else {
@@ -338,7 +338,7 @@ export function SalesClient({ products, initialSales }: { products: Product[]; i
               variant="outline"
               size="sm"
               className="gap-1.5 text-blue-600 border-blue-200 hover:bg-blue-50"
-              onClick={() => { setBulkRows([newBulkRow()]); setBulkResults([]); setBulkNotes(""); setBulkOpen(true); }}
+              onClick={() => { setBulkRows([newBulkRow()]); setBulkResults([]); setBulkNotes(""); setBulkDate(today); setBulkOpen(true); }}
             >
               <Layers className="h-3.5 w-3.5" />
               Bulk Entry
@@ -512,13 +512,26 @@ export function SalesClient({ products, initialSales }: { products: Product[]; i
       <Dialog open={bulkOpen} onOpenChange={(o) => { if (!bulkSaving) setBulkOpen(o); }}>
         <DialogContent className="max-w-6xl w-[95vw] max-h-[90vh] flex flex-col p-0 gap-0">
           <DialogHeader className="px-6 py-4 border-b flex-shrink-0">
-            <DialogTitle className="flex items-center gap-2">
-              <Layers className="h-4 w-4 text-blue-500" />
-              Bulk Sales Entry
-              <span className="text-sm font-normal text-muted-foreground ml-1">
-                — each row is saved as a separate sale
-              </span>
-            </DialogTitle>
+            <div className="flex items-center justify-between gap-4">
+              <DialogTitle className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-blue-500" />
+                Bulk Sales Entry
+              </DialogTitle>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Label className="text-sm font-medium whitespace-nowrap">Sale Date</Label>
+                <Input
+                  type="date"
+                  max={today}
+                  value={bulkDate}
+                  onChange={(e) => setBulkDate(e.target.value)}
+                  className="h-8 text-sm w-36"
+                />
+                {bulkDate !== today && (
+                  <span className="text-xs text-amber-600 font-medium whitespace-nowrap">Backdated</span>
+                )}
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">All orders in this session will be recorded for the selected date.</p>
           </DialogHeader>
 
           {/* Scrollable table area */}
@@ -527,8 +540,7 @@ export function SalesClient({ products, initialSales }: { products: Product[]; i
               <thead>
                 <tr className="text-left">
                   <th className="pb-2 font-medium text-slate-500 w-8">#</th>
-                  <th className="pb-2 font-medium text-slate-500 w-32">Date *</th>
-                  <th className="pb-2 font-medium text-slate-500 min-w-[180px]">Product *</th>
+                  <th className="pb-2 font-medium text-slate-500 min-w-[200px]">Product *</th>
                   <th className="pb-2 font-medium text-slate-500 w-28">Qty (primary)</th>
                   <th className="pb-2 font-medium text-slate-500 w-24">Boxes</th>
                   <th className="pb-2 font-medium text-slate-500 w-28">Unit Price</th>
@@ -557,21 +569,6 @@ export function SalesClient({ products, initialSales }: { products: Product[]; i
                             : <span title={result.msg}><AlertCircle className="h-4 w-4 text-red-500 mx-auto" /></span>
                         ) : (
                           <span className="text-xs">{idx + 1}</span>
-                        )}
-                      </td>
-
-                      {/* Date */}
-                      <td className="px-2 py-2 align-middle">
-                        <Input
-                          type="date"
-                          max={today}
-                          value={row.sale_date}
-                          onChange={(e) => updateBulkRow(row.id, { sale_date: e.target.value })}
-                          className="h-8 text-xs w-full"
-                          disabled={!!result?.ok}
-                        />
-                        {row.sale_date !== today && (
-                          <p className="text-[10px] text-amber-600 mt-0.5 pl-1">Backdated</p>
                         )}
                       </td>
 
