@@ -31,9 +31,11 @@ export default function LoginPage() {
     }
 
     // Check if approved
+    const { data: { user } } = await supabase.auth.getUser();
     const { data: profile } = await supabase
       .from("profiles")
       .select("is_approved")
+      .eq("id", user!.id)
       .single();
 
     if (!profile?.is_approved) {

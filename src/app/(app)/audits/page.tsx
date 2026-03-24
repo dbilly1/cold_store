@@ -8,7 +8,7 @@ export default async function AuditsPage() {
   const [{ data: products }, { data: audits }] = await Promise.all([
     supabase
       .from("products")
-      .select("id, name, unit_type, current_stock_kg, current_stock_units, current_stock_boxes, variance_threshold_pct")
+      .select("id, name, unit_type, units_per_box, current_stock_kg, current_stock_units, current_stock_boxes, variance_threshold_pct")
       .eq("is_active", true)
       .order("name"),
     supabase
@@ -20,7 +20,7 @@ export default async function AuditsPage() {
           id, product_id, system_stock_kg, system_stock_units, system_stock_boxes,
           physical_stock_kg, physical_stock_units, physical_stock_boxes,
           variance_kg, variance_units, variance_pct, within_threshold, notes,
-          product:products(name, unit_type)
+          product:products(name, unit_type, units_per_box)
         )
       `)
       .order("created_at", { ascending: false })
