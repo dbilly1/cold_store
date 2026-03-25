@@ -176,7 +176,7 @@ export function CreditClient({
       new_value: { customer_id: paymentDialog.customerId, amount: amt },
     });
 
-    setPayments((prev) => [{ ...(data as CreditPayment), recorded_by_profile: null }, ...prev]);
+    setPayments((prev) => [{ ...(data as unknown as CreditPayment), recorded_by_profile: null }, ...prev]);
     toast({ title: "Payment recorded" });
     setPaymentDialog((p) => ({ ...p, open: false, amount: "", notes: "" }));
     setPaymentSaving(false);
