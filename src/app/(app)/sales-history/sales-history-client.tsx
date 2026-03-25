@@ -121,7 +121,7 @@ export function SalesHistoryClient() {
       .lte("sale_date", dateTo)
       .eq("is_deleted", false)
       .order("sale_date", { ascending: true });
-    setSales((data as SaleRow[]) ?? []);
+    setSales((data as unknown as SaleRow[]) ?? []);
     setLoading(false);
   }, [dateFrom, dateTo]);
 
