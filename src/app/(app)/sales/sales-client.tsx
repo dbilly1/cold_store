@@ -448,7 +448,7 @@ export function SalesClient({
           {
             reconciliation_date: saleDate,
             submitted_by: profile!.id,
-            recorded_by: profile!.id,
+            session_key: batchId,
             system_cash_total: sysCash,
             system_mobile_total: sysMobile,
             actual_cash_entered: actCash,
@@ -456,7 +456,7 @@ export function SalesClient({
             status,
             notes: bulkNotes || null,
           },
-          { onConflict: "reconciliation_date,recorded_by" },
+          { onConflict: "reconciliation_date,session_key" },
         )
         .select()
         .single();
