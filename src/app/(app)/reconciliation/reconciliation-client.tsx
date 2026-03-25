@@ -9,9 +9,22 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
-import { CheckCircle, AlertTriangle, Calculator, ChevronRight, Layers, Receipt } from "lucide-react";
+import { CheckCircle, AlertTriangle, Calculator, ChevronRight, Layers, Receipt, Plus, Trash2 } from "lucide-react";
 import type { DaySessionData, SessionData } from "./page";
+import type { ExpenseCategory } from "@/types/database";
+
+const EXPENSE_CATEGORIES: { value: ExpenseCategory; label: string }[] = [
+  { value: "electricity", label: "Electricity" },
+  { value: "transport", label: "Transport" },
+  { value: "wages", label: "Wages" },
+  { value: "rent", label: "Rent" },
+  { value: "maintenance", label: "Maintenance" },
+  { value: "packaging", label: "Packaging" },
+  { value: "cleaning", label: "Cleaning" },
+  { value: "miscellaneous", label: "Miscellaneous" },
+];
 
 interface Reconciliation {
   id: string;
@@ -31,6 +44,13 @@ interface Reconciliation {
 
 type FormEntry = { cash: string; mobile: string; notes: string };
 
+interface PendingExpense {
+  id: string;
+  category: ExpenseCategory;
+  description: string;
+  amount: string;
+}
+
 export function ReconciliationClient({
   today,
   days,
@@ -46,6 +66,7 @@ export function ReconciliationClient({
   const [selectedDate, setSelectedDate] = useState(today);
   const [formState, setFormState] = useState<Record<string, FormEntry>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [pendingExpenses, setPendingExpenses] = useState<Record<string, PendingExpense[]>>({});
 
   // Populate form from existing reconciliations when date changes
   useEffect(() => {
@@ -61,6 +82,7 @@ export function ReconciliationClient({
       }
     });
     setFormState(initial);
+    setPendingExpenses({});
   }, [selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedDay = days.find((d) => d.date === selectedDate);
@@ -69,6 +91,30 @@ export function ReconciliationClient({
     setFormState((prev) => ({
       ...prev,
       [sessionKey]: { ...prev[sessionKey] ?? { cash: "", mobile: "", notes: "" }, ...patch },
+    }));
+  }
+
+  function addExpense(sessionKey: string) {
+    setPendingExpenses((prev) => ({
+      ...prev,
+      [sessionKey]: [
+        ...(prev[sessionKey] ?? []),
+        { id: crypto.randomUUID(), category: "miscellaneous", description: "", amount: "" },
+      ],
+    }));
+  }
+
+  function updateExpense(sessionKey: string, id: string, patch: Partial<PendingExpense>) {
+    setPendingExpenses((prev) => ({
+      ...prev,
+      [sessionKey]: (prev[sessionKey] ?? []).map((e) => (e.id === id ? { ...e, ...patch } : e)),
+    }));
+  }
+
+  function removeExpense(sessionKey: string, id: string) {
+    setPendingExpenses((prev) => ({
+      ...prev,
+      [sessionKey]: (prev[sessionKey] ?? []).filter((e) => e.id !== id),
     }));
   }
 
@@ -86,11 +132,32 @@ export function ReconciliationClient({
     }
     setSaving((prev) => ({ ...prev, [session.session_key]: true }));
     const supabase = createClient();
+
+    // Save any pending expenses first
+    const validExpenses = (pendingExpenses[session.session_key] ?? []).filter(
+      (e) => e.description.trim() && parseFloat(e.amount) > 0
+    );
+    if (validExpenses.length > 0) {
+      await supabase.from("expenses").insert(
+        validExpenses.map((e) => ({
+          expense_date: selectedDate,
+          category: e.category,
+          description: e.description.trim(),
+          amount: parseFloat(e.amount),
+          paid_from_till: true,
+          recorded_by: profile!.id,
+          batch_id: session.session_key !== "direct" ? session.session_key : null,
+        }))
+      );
+    }
+
+    const newExpensesTotal = validExpenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+    const savedExpensesTotal = session.session_expenses.reduce((s, e) => s + e.amount, 0);
     const cash = parseFloat(form.cash) || 0;
     const mobile = parseFloat(form.mobile) || 0;
     const isBulkSession = session.session_key !== "direct";
-    const cashExpenses = !isBulkSession ? (selectedDay?.cash_expenses ?? 0) : 0;
-    const expectedCash = session.system_cash - cashExpenses;
+    const dayTillExpenses = !isBulkSession ? (selectedDay?.cash_expenses ?? 0) : 0;
+    const expectedCash = session.system_cash - dayTillExpenses - savedExpensesTotal - newExpensesTotal;
     const cashV = cash - expectedCash;
     const mobileV = mobile - session.system_mobile;
     const status = cashV === 0 && mobileV === 0 ? "balanced" : "flagged";
@@ -106,8 +173,6 @@ export function ReconciliationClient({
           system_mobile_total: session.system_mobile,
           actual_cash_entered: cash,
           actual_mobile_entered: mobile,
-          cash_variance: cashV,
-          mobile_variance: mobileV,
           status,
           notes: form.notes || null,
         },
@@ -145,12 +210,23 @@ export function ReconciliationClient({
       data as Reconciliation,
       ...prev.filter((r) => !(r.reconciliation_date === selectedDate && r.session_key === session.session_key)),
     ]);
+    // Clear pending expenses for this session
+    setPendingExpenses((prev) => ({ ...prev, [session.session_key]: [] }));
 
-    toast({
-      title: status === "balanced" ? "Balanced!" : "Mismatch flagged",
-      description: status !== "balanced" ? "Review this session for discrepancies." : undefined,
-      variant: status === "balanced" ? ("success" as never) : "destructive",
-    });
+    if (status === "balanced") {
+      toast({ title: "Balanced!", variant: "success" as never });
+    } else {
+      const parts: string[] = [];
+      if (cashV > 0) parts.push(`Cash surplus: +${formatCurrency(cashV)}`);
+      else if (cashV < 0) parts.push(`Cash shortfall: ${formatCurrency(cashV)}`);
+      if (mobileV > 0) parts.push(`Mobile surplus: +${formatCurrency(mobileV)}`);
+      else if (mobileV < 0) parts.push(`Mobile shortfall: ${formatCurrency(mobileV)}`);
+      toast({
+        title: cashV < 0 || mobileV < 0 ? "Shortfall flagged" : "Surplus flagged",
+        description: parts.join(" · "),
+        variant: "destructive",
+      });
+    }
     setSaving((prev) => ({ ...prev, [session.session_key]: false }));
   }
 
@@ -170,9 +246,14 @@ export function ReconciliationClient({
     if (recons.length === 0) return { label: "Pending", color: "text-slate-400" };
     if (recons.length < sessions.length)
       return { label: `Partial (${recons.length}/${sessions.length})`, color: "text-amber-600 font-medium" };
-    return recons.every((r) => r.status === "balanced")
-      ? { label: "Balanced", color: "text-green-600 font-medium" }
-      : { label: "Mismatch", color: "text-red-600 font-medium" };
+    if (recons.every((r) => r.status === "balanced"))
+      return { label: "Balanced", color: "text-green-600 font-medium" };
+    // Determine shortfall vs surplus from stored variances
+    const hasShortfall = recons.some((r) => r.cash_variance < 0 || r.mobile_variance < 0);
+    const hasSurplus = recons.some((r) => r.cash_variance > 0 || r.mobile_variance > 0);
+    if (hasShortfall && hasSurplus) return { label: "Mixed", color: "text-amber-600 font-medium" };
+    if (hasShortfall) return { label: "Shortfall", color: "text-red-600 font-medium" };
+    return { label: "Surplus", color: "text-amber-600 font-medium" };
   }
 
   return (
@@ -210,9 +291,13 @@ export function ReconciliationClient({
               const existing = reconLookup.get(`${selectedDate}|${session.session_key}`);
               const form = formState[session.session_key] ?? { cash: "", mobile: "", notes: "" };
               const isBulk = session.session_key !== "direct";
-              // Till expenses only apply to the direct session
-              const cashExpenses = !isBulk ? (selectedDay.cash_expenses ?? 0) : 0;
-              const expectedCash = session.system_cash - cashExpenses;
+              const dayTillExpenses = !isBulk ? (selectedDay.cash_expenses ?? 0) : 0;
+              const savedExpensesTotal = session.session_expenses.reduce((s, e) => s + e.amount, 0);
+              const pendingList = pendingExpenses[session.session_key] ?? [];
+              const pendingExpensesTotal = pendingList.reduce(
+                (s, e) => s + (parseFloat(e.amount) || 0), 0
+              );
+              const expectedCash = session.system_cash - dayTillExpenses - savedExpensesTotal - pendingExpensesTotal;
               const cashVariance = (parseFloat(form.cash) || 0) - expectedCash;
               const mobileVariance = (parseFloat(form.mobile) || 0) - session.system_mobile;
               const isBalanced = cashVariance === 0 && mobileVariance === 0;
@@ -248,13 +333,25 @@ export function ReconciliationClient({
                         <span className="text-slate-500">Cash Sales</span>
                         <span className="font-medium">{formatCurrency(session.system_cash)}</span>
                       </div>
-                      {cashExpenses > 0 && (
+                      {dayTillExpenses > 0 && (
                         <div className="flex justify-between text-amber-700">
-                          <span>Till Expenses</span>
-                          <span className="font-medium">− {formatCurrency(cashExpenses)}</span>
+                          <span>Till Expenses (day)</span>
+                          <span className="font-medium">− {formatCurrency(dayTillExpenses)}</span>
                         </div>
                       )}
-                      {cashExpenses > 0 && (
+                      {session.session_expenses.map((exp) => (
+                        <div key={exp.id} className="flex justify-between text-amber-700">
+                          <span className="truncate mr-2">{exp.description || exp.category}</span>
+                          <span className="font-medium whitespace-nowrap">− {formatCurrency(exp.amount)}</span>
+                        </div>
+                      ))}
+                      {pendingExpensesTotal > 0 && (
+                        <div className="flex justify-between text-amber-700">
+                          <span>New Expenses</span>
+                          <span className="font-medium">− {formatCurrency(pendingExpensesTotal)}</span>
+                        </div>
+                      )}
+                      {(dayTillExpenses > 0 || savedExpensesTotal > 0 || pendingExpensesTotal > 0) && (
                         <div className="flex justify-between font-semibold border-t pt-1.5">
                           <span>Expected Cash</span>
                           <span>{formatCurrency(expectedCash)}</span>
@@ -310,14 +407,89 @@ export function ReconciliationClient({
                       />
                     </div>
 
-                    {(form.cash || form.mobile) && (
-                      <div className={`rounded-lg p-2 flex items-center gap-2 text-xs ${isBalanced ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
-                        {isBalanced
-                          ? <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-                          : <AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
-                        {isBalanced ? "All amounts match — balanced!" : "Discrepancy detected"}
+                    {/* Session expenses */}
+                    <div className="space-y-2 border-t pt-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs text-slate-500">Add expenses paid from till</Label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 text-xs gap-1 px-2 text-slate-600"
+                          onClick={() => addExpense(session.session_key)}
+                        >
+                          <Plus className="h-3 w-3" /> Add
+                        </Button>
                       </div>
-                    )}
+                      {pendingList.map((exp) => (
+                        <div key={exp.id} className="flex gap-1.5 items-center">
+                          <Select
+                            value={exp.category}
+                            onValueChange={(v) => updateExpense(session.session_key, exp.id, { category: v as ExpenseCategory })}
+                          >
+                            <SelectTrigger className="h-7 text-xs w-28 flex-shrink-0">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {EXPENSE_CATEGORIES.map((c) => (
+                                <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            className="h-7 text-xs flex-1 min-w-0"
+                            value={exp.description}
+                            onChange={(e) => updateExpense(session.session_key, exp.id, { description: e.target.value })}
+                            placeholder="Description"
+                          />
+                          <Input
+                            type="number" min="0" step="0.01"
+                            className="h-7 text-xs w-20 flex-shrink-0"
+                            value={exp.amount}
+                            onChange={(e) => updateExpense(session.session_key, exp.id, { amount: e.target.value })}
+                            placeholder="0.00"
+                          />
+                          <Button
+                            variant="ghost" size="icon"
+                            className="h-7 w-7 text-slate-400 flex-shrink-0"
+                            onClick={() => removeExpense(session.session_key, exp.id)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {(form.cash || form.mobile) && (() => {
+                      if (isBalanced) {
+                        return (
+                          <div className="rounded-lg p-2 flex items-center gap-2 text-xs bg-green-50 text-green-700">
+                            <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                            All amounts match — balanced!
+                          </div>
+                        );
+                      }
+                      const parts: string[] = [];
+                      if (form.cash) {
+                        if (cashVariance > 0) parts.push(`Cash surplus: +${formatCurrency(cashVariance)}`);
+                        else if (cashVariance < 0) parts.push(`Cash shortfall: ${formatCurrency(cashVariance)}`);
+                      }
+                      if (form.mobile) {
+                        if (mobileVariance > 0) parts.push(`Mobile surplus: +${formatCurrency(mobileVariance)}`);
+                        else if (mobileVariance < 0) parts.push(`Mobile shortfall: ${formatCurrency(mobileVariance)}`);
+                      }
+                      const hasShortfall = cashVariance < 0 || mobileVariance < 0;
+                      const hasSurplus = cashVariance > 0 || mobileVariance > 0;
+                      const bgColor = hasShortfall && hasSurplus
+                        ? "bg-amber-50 text-amber-700"
+                        : hasShortfall ? "bg-red-50 text-red-700"
+                        : "bg-amber-50 text-amber-700";
+                      return (
+                        <div className={`rounded-lg p-2 flex items-start gap-2 text-xs ${bgColor}`}>
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                          <span>{parts.join(" · ")}</span>
+                        </div>
+                      );
+                    })()}
 
                     <Button
                       onClick={() => handleSubmit(session)}

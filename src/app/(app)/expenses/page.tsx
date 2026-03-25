@@ -9,7 +9,7 @@ export default async function ExpensesPage() {
 
   const { data: expenses } = await supabase
     .from("expenses")
-    .select(`id, expense_date, category, description, amount, created_at,
+    .select(`id, expense_date, category, description, amount, paid_from_till, batch_id, created_at,
       recorded_by_profile:profiles!expenses_recorded_by_fkey(full_name)`)
     .gte("expense_date", monthAgo)
     .order("expense_date", { ascending: false });

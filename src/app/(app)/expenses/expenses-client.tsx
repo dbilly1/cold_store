@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { Plus, Receipt, Banknote } from "lucide-react";
+import { Plus, Receipt, Banknote, Pencil } from "lucide-react";
 import { format } from "date-fns";
 import type { ExpenseCategory } from "@/types/database";
 
@@ -34,9 +34,18 @@ interface Expense {
   description: string;
   amount: number;
   paid_from_till: boolean;
+  batch_id: string | null;
   created_at: string;
   recorded_by_profile: { full_name: string } | null;
 }
+
+type EditForm = {
+  expense_date: string;
+  category: ExpenseCategory;
+  description: string;
+  amount: string;
+  paid_from_till: boolean;
+};
 
 export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
   const { toast } = useToast();
@@ -44,6 +53,15 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
   const [expenses, setExpenses] = useState<Expense[]>(initial);
   const [dialog, setDialog] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [editDialog, setEditDialog] = useState(false);
+  const [editId, setEditId] = useState("");
+  const [editForm, setEditForm] = useState<EditForm>({
+    expense_date: "",
+    category: "electricity" as ExpenseCategory,
+    description: "",
+    amount: "",
+    paid_from_till: false,
+  });
   const [form, setForm] = useState({
     expense_date: format(new Date(), "yyyy-MM-dd"),
     category: "electricity" as ExpenseCategory,
@@ -88,6 +106,53 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
       toast({ title: "Expense recorded" });
       setDialog(false);
       setForm({ expense_date: format(new Date(), "yyyy-MM-dd"), category: "electricity", description: "", amount: "", paid_from_till: false });
+    }
+    setSaving(false);
+  }
+
+  function openEdit(expense: Expense) {
+    setEditId(expense.id);
+    setEditForm({
+      expense_date: expense.expense_date,
+      category: expense.category,
+      description: expense.description,
+      amount: expense.amount.toString(),
+      paid_from_till: expense.paid_from_till,
+    });
+    setEditDialog(true);
+  }
+
+  async function handleUpdate() {
+    if (!editForm.description.trim()) { toast({ title: "Description required", variant: "destructive" }); return; }
+    const amount = parseFloat(editForm.amount);
+    if (!amount || amount <= 0) { toast({ title: "Valid amount required", variant: "destructive" }); return; }
+
+    setSaving(true);
+    const supabase = createClient();
+    const prev = expenses.find((e) => e.id === editId);
+    const { error } = await supabase
+      .from("expenses")
+      .update({
+        expense_date: editForm.expense_date,
+        category: editForm.category,
+        description: editForm.description.trim(),
+        amount,
+        paid_from_till: editForm.paid_from_till,
+      })
+      .eq("id", editId);
+
+    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); }
+    else {
+      setExpenses(expenses.map((e) =>
+        e.id === editId ? { ...e, ...editForm, amount } : e
+      ));
+      await supabase.from("audit_logs").insert({
+        user_id: profile!.id, action: "UPDATE_EXPENSE", entity_type: "expenses", entity_id: editId,
+        previous_value: prev ? { category: prev.category, amount: prev.amount, description: prev.description } : null,
+        new_value: { category: editForm.category, amount, description: editForm.description, paid_from_till: editForm.paid_from_till },
+      });
+      toast({ title: "Expense updated" });
+      setEditDialog(false);
     }
     setSaving(false);
   }
@@ -145,6 +210,7 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
                   <th className="text-right p-3 font-medium text-slate-600">Amount</th>
                   <th className="text-center p-3 font-medium text-slate-600">Till</th>
                   <th className="text-left p-3 font-medium text-slate-600">By</th>
+                  <th className="w-10" />
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -168,6 +234,12 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
                     <td className="p-3 text-xs text-slate-500">
                       {(expense.recorded_by_profile as { full_name: string } | null)?.full_name}
                     </td>
+                    <td className="p-3">
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-slate-700"
+                        onClick={() => openEdit(expense)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -179,6 +251,52 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
         </div>
       </div>
 
+      {/* Edit dialog */}
+      <Dialog open={editDialog} onOpenChange={setEditDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Edit Expense</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Date</Label>
+              <Input type="date" value={editForm.expense_date} onChange={(e) => setEditForm({ ...editForm, expense_date: e.target.value })} />
+            </div>
+            <div>
+              <Label>Category *</Label>
+              <Select value={editForm.category} onValueChange={(v) => setEditForm({ ...editForm, category: v as ExpenseCategory })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {CATEGORIES.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Description *</Label>
+              <Input value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
+            </div>
+            <div>
+              <Label>Amount (GHS) *</Label>
+              <Input type="number" min="0" step="0.01" value={editForm.amount} onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })} />
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={editForm.paid_from_till}
+                onChange={(e) => setEditForm({ ...editForm, paid_from_till: e.target.checked })}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              <span className="text-sm">Paid from daily cash (till)</span>
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditDialog(false)}>Cancel</Button>
+            <Button onClick={handleUpdate} disabled={saving}>{saving ? "Saving..." : "Save Changes"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add dialog */}
       <Dialog open={dialog} onOpenChange={setDialog}>
         <DialogContent className="max-w-sm">
           <DialogHeader>

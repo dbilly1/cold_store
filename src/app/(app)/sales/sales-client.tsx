@@ -27,6 +27,7 @@ import { formatCurrency, formatDateTime, formatDate } from "@/lib/utils";
 import {
   Plus,
   Trash2,
+  Pencil,
   ShoppingCart,
   X,
   Layers,
@@ -39,8 +40,26 @@ import {
   TrendingDown,
   Minus,
 } from "lucide-react";
-import type { PaymentMethod } from "@/types/database";
+import type { PaymentMethod, ExpenseCategory } from "@/types/database";
 import type { DailySummary } from "./page";
+
+const EXPENSE_CATEGORIES: { value: ExpenseCategory; label: string }[] = [
+  { value: "electricity", label: "Electricity" },
+  { value: "transport", label: "Transport" },
+  { value: "wages", label: "Wages" },
+  { value: "rent", label: "Rent" },
+  { value: "maintenance", label: "Maintenance" },
+  { value: "packaging", label: "Packaging" },
+  { value: "cleaning", label: "Cleaning" },
+  { value: "miscellaneous", label: "Miscellaneous" },
+];
+
+interface BulkExpenseRow {
+  id: string;
+  category: ExpenseCategory;
+  description: string;
+  amount: string;
+}
 
 interface Product {
   id: string;
@@ -194,6 +213,8 @@ export function SalesClient({
   const [bulkReconEnabled, setBulkReconEnabled] = useState(false);
   const [bulkActualCash, setBulkActualCash] = useState("");
   const [bulkActualMobile, setBulkActualMobile] = useState("");
+  // Bulk expenses
+  const [bulkExpenses, setBulkExpenses] = useState<BulkExpenseRow[]>([]);
 
   // Delete dialog
   const [deleteDialog, setDeleteDialog] = useState<{
@@ -205,6 +226,26 @@ export function SalesClient({
     saleId: "",
     reason: "",
   });
+
+  // Edit dialog
+  interface EditItem {
+    id: string;
+    productName: string;
+    unit_type: string;
+    quantity: string;
+    quantity_boxes: string;
+    unit_price: string;
+    discount_amount: string;
+  }
+  const [editDialog, setEditDialog] = useState<{
+    open: boolean;
+    saleId: string;
+    sale_date: string;
+    paymentMethod: PaymentMethod;
+    notes: string;
+    items: EditItem[];
+  }>({ open: false, saleId: "", sale_date: "", paymentMethod: "cash", notes: "", items: [] });
+  const [editSaving, setEditSaving] = useState(false);
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -429,6 +470,26 @@ export function SalesClient({
     const saved = results.filter((r) => r.ok).length;
     const failed = results.filter((r) => !r.ok).length;
 
+    // Save bulk session expenses
+    const validBulkExpenses = bulkExpenses.filter(
+      (e) => e.description.trim() && parseFloat(e.amount) > 0
+    );
+    if (validBulkExpenses.length > 0 && saved > 0) {
+      await supabase.from("expenses").insert(
+        validBulkExpenses.map((e) => ({
+          expense_date: saleDate,
+          category: e.category,
+          description: e.description.trim(),
+          amount: parseFloat(e.amount),
+          paid_from_till: true,
+          recorded_by: profile!.id,
+          batch_id: batchId,
+        }))
+      );
+    }
+
+    const bulkExpensesTotal = validBulkExpenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+
     // Optional reconciliation
     if (bulkReconEnabled && saved > 0) {
       const sysCash = bulkValidRows
@@ -439,8 +500,9 @@ export function SalesClient({
         .reduce((s, r) => s + bulkLineTotal(r, products), 0);
       const actCash = parseFloat(bulkActualCash) || 0;
       const actMobile = parseFloat(bulkActualMobile) || 0;
+      const expectedCash = sysCash - bulkExpensesTotal;
       const status =
-        actCash === sysCash && actMobile === sysMobile ? "balanced" : "flagged";
+        actCash === expectedCash && actMobile === sysMobile ? "balanced" : "flagged";
 
       const { data: reconData, error: reconErr } = await supabase
         .from("daily_reconciliations")
@@ -449,7 +511,7 @@ export function SalesClient({
             reconciliation_date: saleDate,
             submitted_by: profile!.id,
             session_key: batchId,
-            system_cash_total: sysCash,
+            system_cash_total: expectedCash,
             system_mobile_total: sysMobile,
             actual_cash_entered: actCash,
             actual_mobile_entered: actMobile,
@@ -466,7 +528,7 @@ export function SalesClient({
           alert_type: "cash_mismatch",
           severity: "high",
           title: "Cash Reconciliation Mismatch",
-          message: `Cash variance: ${formatCurrency(actCash - sysCash)}, Mobile variance: ${formatCurrency(actMobile - sysMobile)}`,
+          message: `Cash variance: ${formatCurrency(actCash - expectedCash)}, Mobile variance: ${formatCurrency(actMobile - sysMobile)}`,
           related_entity_type: "daily_reconciliations",
           related_entity_id: reconData.id,
         });
@@ -492,6 +554,7 @@ export function SalesClient({
       setBulkReconEnabled(false);
       setBulkActualCash("");
       setBulkActualMobile("");
+      setBulkExpenses([]);
     } else {
       toast({
         title: `${saved} saved, ${failed} failed`,
@@ -547,6 +610,95 @@ export function SalesClient({
     setDeleteDialog({ open: false, saleId: "", reason: "" });
     toast({ title: "Sale deleted", variant: "destructive" });
   };
+
+  // ── Edit sale ────────────────────────────────
+  function openEditDialog(sale: ExistingSale) {
+    setEditDialog({
+      open: true,
+      saleId: sale.id,
+      sale_date: sale.sale_date,
+      paymentMethod: sale.payment_method as PaymentMethod,
+      notes: "",
+      items: (sale.items ?? []).map((item) => {
+        const ut = (item.product as { name: string; unit_type: string } | null)?.unit_type ?? "units";
+        const qty = ut === "kg" ? item.quantity_kg
+          : ut === "boxes" ? item.quantity_boxes
+          : item.quantity_units;
+        return {
+          id: item.id,
+          productName: (item.product as { name: string; unit_type: string } | null)?.name ?? "Unknown",
+          unit_type: ut,
+          quantity: qty.toString(),
+          quantity_boxes: item.quantity_boxes.toString(),
+          unit_price: item.unit_price.toString(),
+          discount_amount: item.discount_amount.toString(),
+        };
+      }),
+    });
+  }
+
+  async function handleEditSave() {
+    setEditSaving(true);
+    const supabase = createClient();
+    let newTotal = 0;
+
+    for (const item of editDialog.items) {
+      const qty = parseFloat(item.quantity) || 0;
+      const qBoxes = item.unit_type === "boxes" ? qty : parseFloat(item.quantity_boxes) || 0;
+      const price = parseFloat(item.unit_price) || 0;
+      const disc = parseFloat(item.discount_amount) || 0;
+      const effectiveQty = item.unit_type === "boxes" ? qBoxes : qty;
+      const lineTotal = Math.max(0, effectiveQty * price - disc);
+      newTotal += lineTotal;
+
+      const { error } = await supabase.from("sale_items").update({
+        quantity_kg: item.unit_type === "kg" ? qty : 0,
+        quantity_units: item.unit_type === "units" ? qty : 0,
+        quantity_boxes: qBoxes,
+        unit_price: price,
+        discount_amount: disc,
+        line_total: lineTotal,
+      }).eq("id", item.id);
+
+      if (error) {
+        toast({ title: "Failed to update item", description: error.message, variant: "destructive" });
+        setEditSaving(false);
+        return;
+      }
+    }
+
+    const { error: saleErr } = await supabase.from("sales").update({
+      payment_method: editDialog.paymentMethod,
+      total_amount: newTotal,
+      sale_date: editDialog.sale_date,
+    }).eq("id", editDialog.saleId);
+
+    if (saleErr) {
+      toast({ title: "Failed to update sale", description: saleErr.message, variant: "destructive" });
+      setEditSaving(false);
+      return;
+    }
+
+    await supabase.from("audit_logs").insert({
+      user_id: profile!.id,
+      action: "UPDATE_SALE",
+      entity_type: "sales",
+      entity_id: editDialog.saleId,
+      new_value: { total_amount: newTotal, payment_method: editDialog.paymentMethod },
+    });
+
+    // Refresh the relevant list
+    const refreshDate = editDialog.sale_date;
+    const fresh = await refreshSales(supabase, refreshDate);
+    if (fresh) {
+      if (refreshDate === today) setSales(fresh as unknown as ExistingSale[]);
+      else setDayDetails(fresh as unknown as ExistingSale[]);
+    }
+
+    toast({ title: "Sale updated" });
+    setEditDialog((prev) => ({ ...prev, open: false }));
+    setEditSaving(false);
+  }
 
   // Daily drill-down (non-salesperson)
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -882,20 +1034,26 @@ export function SalesClient({
                         {(profile?.role === "salesperson" ||
                           profile?.role === "supervisor" ||
                           profile?.role === "admin") && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                            onClick={() =>
-                              setDeleteDialog({
-                                open: true,
-                                saleId: sale.id,
-                                reason: "",
-                              })
-                            }
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button size="sm" variant="ghost" className="text-slate-400 hover:text-slate-700"
+                              onClick={() => openEditDialog(sale)}>
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                              onClick={() =>
+                                setDeleteDialog({
+                                  open: true,
+                                  saleId: sale.id,
+                                  reason: "",
+                                })
+                              }
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         )}
                       </div>
                     </CardContent>
@@ -1089,7 +1247,7 @@ export function SalesClient({
                       <th className="text-right px-4 py-3 font-medium text-slate-600 w-28">Amount</th>
                       <th className="text-center px-4 py-3 font-medium text-slate-600 w-24">Payment</th>
                       <th className="text-left px-4 py-3 font-medium text-slate-600 w-36">Recorded by</th>
-                      {canDelete && <th className="w-10" />}
+                      {canDelete && <th className="w-20" />}
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -1134,10 +1292,16 @@ export function SalesClient({
                         </td>
                         {canDelete && (
                           <td className="px-2 py-3">
-                            <Button size="sm" variant="ghost" className="text-red-400 hover:text-red-600 hover:bg-red-50"
-                              onClick={() => setDeleteDialog({ open: true, saleId: sale.id, reason: "" })}>
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            <div className="flex items-center gap-0.5">
+                              <Button size="sm" variant="ghost" className="text-slate-400 hover:text-slate-700 h-7 w-7 p-0"
+                                onClick={() => openEditDialog(sale)}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button size="sm" variant="ghost" className="text-red-400 hover:text-red-600 hover:bg-red-50 h-7 w-7 p-0"
+                                onClick={() => setDeleteDialog({ open: true, saleId: sale.id, reason: "" })}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
                           </td>
                         )}
                       </tr>
@@ -1218,7 +1382,10 @@ export function SalesClient({
       <Dialog
         open={bulkOpen}
         onOpenChange={(o) => {
-          if (!bulkSaving) setBulkOpen(o);
+          if (!bulkSaving) {
+            setBulkOpen(o);
+            if (!o) setBulkExpenses([]);
+          }
         }}
       >
         <DialogContent className="max-w-6xl w-[95vw] max-h-[90vh] flex flex-col p-0 gap-0">
@@ -1482,6 +1649,70 @@ export function SalesClient({
               </div>
             </div>
 
+            {/* Expenses section */}
+            <div className="border rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 bg-white">
+                <span className="text-sm font-medium">Session expenses (paid from till)</span>
+                <Button
+                  variant="ghost" size="sm"
+                  className="h-6 text-xs gap-1 px-2"
+                  onClick={() => setBulkExpenses([
+                    ...bulkExpenses,
+                    { id: crypto.randomUUID(), category: "miscellaneous", description: "", amount: "" },
+                  ])}
+                >
+                  <Plus className="h-3 w-3" /> Add
+                </Button>
+              </div>
+              {bulkExpenses.length > 0 && (
+                <div className="px-4 pb-3 pt-1 bg-white border-t space-y-2">
+                  {bulkExpenses.map((exp) => (
+                    <div key={exp.id} className="flex gap-1.5 items-center">
+                      <Select
+                        value={exp.category}
+                        onValueChange={(v) => setBulkExpenses((prev) =>
+                          prev.map((e) => e.id === exp.id ? { ...e, category: v as ExpenseCategory } : e)
+                        )}
+                      >
+                        <SelectTrigger className="h-7 text-xs w-28 flex-shrink-0">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {EXPENSE_CATEGORIES.map((c) => (
+                            <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        className="h-7 text-xs flex-1 min-w-0"
+                        value={exp.description}
+                        onChange={(e) => setBulkExpenses((prev) =>
+                          prev.map((r) => r.id === exp.id ? { ...r, description: e.target.value } : r)
+                        )}
+                        placeholder="Description"
+                      />
+                      <Input
+                        type="number" min="0" step="0.01"
+                        className="h-7 text-xs w-20 flex-shrink-0"
+                        value={exp.amount}
+                        onChange={(e) => setBulkExpenses((prev) =>
+                          prev.map((r) => r.id === exp.id ? { ...r, amount: e.target.value } : r)
+                        )}
+                        placeholder="0.00"
+                      />
+                      <Button
+                        variant="ghost" size="icon"
+                        className="h-7 w-7 text-slate-400 flex-shrink-0"
+                        onClick={() => setBulkExpenses((prev) => prev.filter((r) => r.id !== exp.id))}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Reconcile toggle */}
             <div className="border rounded-lg overflow-hidden">
               <label className="flex items-center gap-3 px-4 py-2.5 cursor-pointer bg-white hover:bg-slate-50 select-none">
@@ -1507,9 +1738,11 @@ export function SalesClient({
                   const sysMobile = bulkValidRows
                     .filter((r) => r.payment_method === "mobile_money")
                     .reduce((s, r) => s + bulkLineTotal(r, products), 0);
+                  const expTotal = bulkExpenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+                  const expectedCash = sysCash - expTotal;
                   const actCash = parseFloat(bulkActualCash) || 0;
                   const actMobile = parseFloat(bulkActualMobile) || 0;
-                  const cashVar = actCash - sysCash;
+                  const cashVar = actCash - expectedCash;
                   const mobileVar = actMobile - sysMobile;
                   return (
                     <div className="px-4 pb-4 pt-2 bg-white border-t space-y-3">
@@ -1518,7 +1751,7 @@ export function SalesClient({
                           <Label className="text-xs">
                             Actual Cash{" "}
                             <span className="text-slate-400">
-                              (system: {formatCurrency(sysCash)})
+                              (expected: {formatCurrency(expectedCash)})
                             </span>
                           </Label>
                           <Input
@@ -1602,6 +1835,114 @@ export function SalesClient({
               </Button>
             </DialogFooter>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit dialog */}
+      <Dialog open={editDialog.open} onOpenChange={(open) => setEditDialog((prev) => ({ ...prev, open }))}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Sale</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Date</Label>
+                <Input
+                  type="date"
+                  value={editDialog.sale_date}
+                  onChange={(e) => setEditDialog((prev) => ({ ...prev, sale_date: e.target.value }))}
+                  className="h-8 text-sm"
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Payment Method</Label>
+                <Select
+                  value={editDialog.paymentMethod}
+                  onValueChange={(v) => setEditDialog((prev) => ({ ...prev, paymentMethod: v as PaymentMethod }))}
+                >
+                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="mobile_money">Mobile Money</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Items */}
+            <div className="space-y-2">
+              <Label className="text-xs text-slate-500">Items</Label>
+              {editDialog.items.map((item, idx) => {
+                const price = parseFloat(item.unit_price) || 0;
+                const disc = parseFloat(item.discount_amount) || 0;
+                const qty = parseFloat(item.quantity) || 0;
+                const lineTotal = Math.max(0, qty * price - disc);
+                return (
+                  <div key={item.id} className="bg-slate-50 rounded-lg p-3 space-y-2">
+                    <p className="text-xs font-medium text-slate-700">{item.productName}
+                      <span className="font-normal text-slate-400 ml-1">({item.unit_type})</span>
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <Label className="text-xs">Qty ({item.unit_type})</Label>
+                        <Input
+                          type="number" min="0" step="0.001"
+                          className="h-7 text-sm"
+                          value={item.quantity}
+                          onChange={(e) => setEditDialog((prev) => ({
+                            ...prev,
+                            items: prev.items.map((it, i) => i === idx ? { ...it, quantity: e.target.value } : it),
+                          }))}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Unit Price</Label>
+                        <Input
+                          type="number" min="0" step="0.01"
+                          className="h-7 text-sm"
+                          value={item.unit_price}
+                          onChange={(e) => setEditDialog((prev) => ({
+                            ...prev,
+                            items: prev.items.map((it, i) => i === idx ? { ...it, unit_price: e.target.value } : it),
+                          }))}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Discount</Label>
+                        <Input
+                          type="number" min="0" step="0.01"
+                          className="h-7 text-sm"
+                          value={item.discount_amount}
+                          onChange={(e) => setEditDialog((prev) => ({
+                            ...prev,
+                            items: prev.items.map((it, i) => i === idx ? { ...it, discount_amount: e.target.value } : it),
+                          }))}
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-right text-slate-500">Line total: <span className="font-semibold text-slate-700">{formatCurrency(lineTotal)}</span></p>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex justify-between items-center pt-1 border-t text-sm font-semibold">
+              <span>New Total</span>
+              <span className="text-blue-600">
+                {formatCurrency(editDialog.items.reduce((s, item) => {
+                  const qty = parseFloat(item.quantity) || 0;
+                  const price = parseFloat(item.unit_price) || 0;
+                  const disc = parseFloat(item.discount_amount) || 0;
+                  return s + Math.max(0, qty * price - disc);
+                }, 0))}
+              </span>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditDialog((prev) => ({ ...prev, open: false }))}>Cancel</Button>
+            <Button onClick={handleEditSave} disabled={editSaving}>{editSaving ? "Saving..." : "Save Changes"}</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -3,18 +3,26 @@ import { TopBar } from "@/components/layout/top-bar";
 import { ReconciliationClient } from "./reconciliation-client";
 import { format, subDays } from "date-fns";
 
+export interface SessionExpense {
+  id: string;
+  category: string;
+  description: string;
+  amount: number;
+}
+
 export interface SessionData {
   session_key: string;   // batch_id (UUID) or "direct"
   session_label: string; // "Session 1", "Session 2", ...
   session_time: string;  // earliest created_at in the group
   system_cash: number;
   system_mobile: number;
+  session_expenses: SessionExpense[]; // saved till expenses for this session (bulk only)
 }
 
 export interface DaySessionData {
   date: string;
   sessions: SessionData[];
-  cash_expenses: number; // total till expenses for the day
+  cash_expenses: number; // direct-only till expenses (batch_id IS NULL)
 }
 
 export default async function ReconciliationPage() {
@@ -31,8 +39,12 @@ export default async function ReconciliationPage() {
   };
 
   type ExpenseRow = {
+    id: string;
     expense_date: string;
+    category: string;
+    description: string;
     amount: number;
+    batch_id: string | null;
   };
 
   // Sales — need batch_id and created_at for session grouping
@@ -43,10 +55,10 @@ export default async function ReconciliationPage() {
     .gte("sale_date", thirtyDaysAgo);
   const allSales = (allSalesRaw ?? []) as unknown as SaleRow[];
 
-  // Till expenses (day-level)
+  // Till expenses — fetch full detail so we can split direct vs bulk session
   const { data: tillExpensesRaw } = await supabase
     .from("expenses")
-    .select("expense_date, amount")
+    .select("id, expense_date, category, description, amount, batch_id")
     .eq("paid_from_till", true)
     .gte("expense_date", thirtyDaysAgo);
   const tillExpenses = (tillExpensesRaw ?? []) as unknown as ExpenseRow[];
@@ -66,10 +78,23 @@ export default async function ReconciliationPage() {
     dateMap.set(sessionKey, ex);
   });
 
-  // Build cash_expenses per date
+  // Direct till expenses: batch_id IS NULL → go into cash_expenses per date
   const expensesByDate = new Map<string, number>();
+  // Bulk session expenses: batch_id IS NOT NULL → go into session_expenses per batch_id
+  const expensesByBatch = new Map<string, SessionExpense[]>();
+
   tillExpenses.forEach((e) => {
-    expensesByDate.set(e.expense_date, (expensesByDate.get(e.expense_date) ?? 0) + e.amount);
+    if (!e.batch_id) {
+      expensesByDate.set(e.expense_date, (expensesByDate.get(e.expense_date) ?? 0) + e.amount);
+    } else {
+      if (!expensesByBatch.has(e.batch_id)) expensesByBatch.set(e.batch_id, []);
+      expensesByBatch.get(e.batch_id)!.push({
+        id: e.id,
+        category: e.category,
+        description: e.description,
+        amount: e.amount,
+      });
+    }
   });
 
   const days: DaySessionData[] = Array.from(byDateSession.entries())
@@ -83,6 +108,10 @@ export default async function ReconciliationPage() {
           session_time: v.time,
           system_cash: v.cash,
           system_mobile: v.mobile,
+          // Bulk sessions carry their own expenses; direct sessions use cash_expenses
+          session_expenses: session_key !== "direct"
+            ? (expensesByBatch.get(session_key) ?? [])
+            : [],
         }));
       return { date, sessions, cash_expenses: expensesByDate.get(date) ?? 0 };
     });
