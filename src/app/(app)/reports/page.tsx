@@ -5,35 +5,55 @@ import { format, subDays } from "date-fns";
 
 export default async function ReportsPage() {
   const supabase = await createClient();
-  const today = format(new Date(), "yyyy-MM-dd");
-  const thirtyDaysAgo = format(subDays(new Date(), 30), "yyyy-MM-dd");
+  // Fetch one year so the client date-picker has real data for any reasonable range
+  const oneYearAgo = format(subDays(new Date(), 365), "yyyy-MM-dd");
 
-  const [{ data: salesData }, { data: expenseData }, { data: productSales }] = await Promise.all([
-    // Daily sales for last 30 days
+  const [
+    { data: salesData },
+    { data: expenseData },
+    { data: productSales },
+    { data: creditPaymentsData },
+    { data: reconData },
+  ] = await Promise.all([
+    // Sales — include quantity_boxes for correct COGS; include payment_method for split
     supabase
       .from("sales")
-      .select("sale_date, total_amount, payment_method, items:sale_items(line_total, cost_price_at_sale, quantity_kg, quantity_units)")
-      .gte("sale_date", thirtyDaysAgo)
+      .select(
+        "sale_date, total_amount, payment_method, items:sale_items(line_total, cost_price_at_sale, quantity_kg, quantity_units, quantity_boxes)",
+      )
+      .gte("sale_date", oneYearAgo)
       .eq("is_deleted", false)
       .order("sale_date"),
 
-    // Expenses for last 30 days
+    // Expenses
     supabase
       .from("expenses")
       .select("expense_date, amount, category")
-      .gte("expense_date", thirtyDaysAgo)
+      .gte("expense_date", oneYearAgo)
       .order("expense_date"),
 
-    // Per-product sales
+    // Per-product sales — include quantity_boxes and payment_method
     supabase
       .from("sale_items")
-      .select(`
-        product_id, quantity_kg, quantity_units, line_total, cost_price_at_sale,
-        product:products(name, unit_type),
-        sale:sales!inner(sale_date, is_deleted)
-      `)
-      .gte("sale.sale_date" as never, thirtyDaysAgo)
+      .select(
+        `product_id, quantity_kg, quantity_units, quantity_boxes, line_total, cost_price_at_sale,
+         product:products(name, unit_type),
+         sale:sales!inner(sale_date, is_deleted, payment_method)`,
+      )
       .eq("sale.is_deleted" as never, false),
+
+    // Credit repayments (for outstanding balance calc)
+    supabase
+      .from("credit_payments")
+      .select("customer_id, amount, payment_method, payment_date")
+      .gte("payment_date", oneYearAgo),
+
+    // Reconciliation sessions (for variance summary)
+    supabase
+      .from("daily_reconciliations")
+      .select("reconciliation_date, cash_variance, mobile_variance, status")
+      .gte("reconciliation_date", oneYearAgo)
+      .order("reconciliation_date"),
   ]);
 
   return (
@@ -43,6 +63,9 @@ export default async function ReportsPage() {
         salesData={salesData ?? []}
         expenseData={expenseData ?? []}
         productSalesData={(productSales ?? []) as never}
+        creditPaymentsData={creditPaymentsData ?? []}
+        reconData={reconData ?? []}
+        dataStartDate={oneYearAgo}
       />
     </div>
   );
