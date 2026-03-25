@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProfile } from "@/hooks/use-profile";
@@ -72,6 +72,7 @@ interface ExistingSale {
   is_deleted: boolean;
   delete_reason: string | null;
   created_at: string;
+  batch_id: string | null;
   recorded_by_profile: { full_name: string } | null;
   items: Array<{
     id: string;
@@ -362,6 +363,7 @@ export function SalesClient({
     const supabase = createClient();
     const results: { id: string; ok: boolean; msg?: string }[] = [];
     const saleDate = bulkDate || today;
+    const batchId = crypto.randomUUID();
 
     for (const row of bulkValidRows) {
       const product = products.find((p) => p.id === row.product_id)!;
@@ -382,6 +384,7 @@ export function SalesClient({
           payment_method: row.payment_method,
           notes: bulkNotes || null,
           is_deleted: false,
+          batch_id: batchId,
         })
         .select()
         .single();
@@ -557,23 +560,35 @@ export function SalesClient({
     setSelectedDate(date);
     setLoadingDay(true);
     const supabase = createClient();
-    const { data } = await supabase
-      .from("sales")
-      .select(
-        `
-        id, sale_date, total_amount, discount_amount, payment_method,
-        is_deleted, delete_reason, created_at,
-        recorded_by_profile:profiles!sales_recorded_by_fkey(full_name),
-        items:sale_items(
-          id, product_id, quantity_kg, quantity_units, quantity_boxes,
-          unit_price, discount_amount, line_total,
-          product:products(name, unit_type)
-        )
-      `,
+
+    const baseSelect = `
+      id, sale_date, total_amount, discount_amount, payment_method,
+      is_deleted, delete_reason, created_at,
+      recorded_by_profile:profiles!sales_recorded_by_fkey(full_name),
+      items:sale_items(
+        id, product_id, quantity_kg, quantity_units, quantity_boxes,
+        unit_price, discount_amount, line_total,
+        product:products(name, unit_type)
       )
+    `;
+
+    let { data, error } = await supabase
+      .from("sales")
+      .select(`${baseSelect}, batch_id`)
       .eq("sale_date", date)
       .eq("is_deleted", false)
       .order("created_at", { ascending: false });
+
+    // batch_id column may not exist yet — fall back to query without it
+    if (error) {
+      ({ data } = await supabase
+        .from("sales")
+        .select(baseSelect)
+        .eq("sale_date", date)
+        .eq("is_deleted", false)
+        .order("created_at", { ascending: false }));
+    }
+
     setDayDetails((data ?? []) as unknown as ExistingSale[]);
     setLoadingDay(false);
   }
@@ -1068,73 +1083,103 @@ export function SalesClient({
                         profile?.role === "admin") && <th className="w-10" />}
                     </tr>
                   </thead>
-                  <tbody className="divide-y">
-                    {dayDetails.map((sale) => (
-                      <tr key={sale.id} className="hover:bg-slate-50">
-                        <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
-                          {formatDateTime(sale.created_at).split(",")[1]?.trim() ?? formatDateTime(sale.created_at)}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="space-y-1">
-                            {sale.items?.map((item) => {
-                              const p = item.product as { name: string; unit_type: string } | null;
-                              return (
-                                <p key={item.id} className="text-xs">{p?.name ?? "—"}</p>
-                              );
-                            })}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="space-y-1">
-                            {sale.items?.map((item) => {
-                              const qtyStr = item.quantity_kg > 0 ? `${item.quantity_kg} kg`
-                                : item.quantity_units > 0 ? `${item.quantity_units} units`
-                                : `${item.quantity_boxes} boxes`;
-                              return (
-                                <p key={item.id} className="text-xs text-slate-600">{qtyStr}</p>
-                              );
-                            })}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="space-y-1">
-                            {sale.items?.map((item) => (
-                              <p key={item.id} className="text-xs text-slate-600">{formatCurrency(item.unit_price)}</p>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right font-semibold">
-                          {formatCurrency(sale.total_amount)}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <Badge variant={sale.payment_method === "cash" ? "secondary" : "outline"} className="text-xs">
-                            {sale.payment_method === "cash" ? "Cash" : "MoMo"}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3 text-xs text-slate-500">
-                          {(sale.recorded_by_profile as { full_name: string } | null)?.full_name ?? "—"}
-                        </td>
-                        {(profile?.role === "supervisor" ||
-                          profile?.role === "admin") && (
-                          <td className="p-3">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="text-red-400 hover:text-red-600 hover:bg-red-50"
-                              onClick={() =>
-                                setDeleteDialog({
-                                  open: true,
-                                  saleId: sale.id,
-                                  reason: "",
-                                })
-                              }
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                  <tbody>
+                    {(() => {
+                      const canDelete = profile?.role === "supervisor" || profile?.role === "admin";
+                      const colSpan = canDelete ? 8 : 7;
+
+                      // Group sales: batch entries grouped by batch_id, individuals standalone
+                      const batchMap = new Map<string, ExistingSale[]>();
+                      const ordered: Array<{ type: "solo"; sale: ExistingSale } | { type: "batch"; batchId: string; sales: ExistingSale[] }> = [];
+                      const seen = new Set<string>();
+
+                      for (const sale of dayDetails) {
+                        if (!sale.batch_id) {
+                          ordered.push({ type: "solo", sale });
+                        } else if (!seen.has(sale.batch_id)) {
+                          seen.add(sale.batch_id);
+                          const group = dayDetails.filter((s) => s.batch_id === sale.batch_id);
+                          batchMap.set(sale.batch_id, group);
+                          ordered.push({ type: "batch", batchId: sale.batch_id, sales: group });
+                        }
+                      }
+
+                      const SaleRow = ({ sale, inBatch }: { sale: ExistingSale; inBatch?: boolean }) => (
+                        <tr key={sale.id} className={`hover:bg-slate-50 border-b ${inBatch ? "bg-blue-50/30" : ""}`}>
+                          <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
+                            {formatDateTime(sale.created_at).split(",")[1]?.trim() ?? formatDateTime(sale.created_at)}
                           </td>
-                        )}
-                      </tr>
-                    ))}
+                          <td className="px-4 py-3">
+                            <div className="space-y-1">
+                              {sale.items?.map((item) => {
+                                const p = item.product as { name: string; unit_type: string } | null;
+                                return <p key={item.id} className="text-xs">{p?.name ?? "—"}</p>;
+                              })}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="space-y-1">
+                              {sale.items?.map((item) => {
+                                const qtyStr = item.quantity_kg > 0 ? `${item.quantity_kg} kg`
+                                  : item.quantity_units > 0 ? `${item.quantity_units} units`
+                                  : `${item.quantity_boxes} boxes`;
+                                return <p key={item.id} className="text-xs text-slate-600">{qtyStr}</p>;
+                              })}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="space-y-1">
+                              {sale.items?.map((item) => (
+                                <p key={item.id} className="text-xs text-slate-600">{formatCurrency(item.unit_price)}</p>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right font-semibold">{formatCurrency(sale.total_amount)}</td>
+                          <td className="px-4 py-3 text-center">
+                            <Badge variant={sale.payment_method === "cash" ? "secondary" : "outline"} className="text-xs">
+                              {sale.payment_method === "cash" ? "Cash" : "MoMo"}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-slate-500">
+                            {(sale.recorded_by_profile as { full_name: string } | null)?.full_name ?? "—"}
+                          </td>
+                          {canDelete && (
+                            <td className="px-2 py-3">
+                              <Button size="sm" variant="ghost" className="text-red-400 hover:text-red-600 hover:bg-red-50"
+                                onClick={() => setDeleteDialog({ open: true, saleId: sale.id, reason: "" })}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+
+                      return ordered.map((entry) => {
+                        if (entry.type === "solo") {
+                          return <SaleRow key={entry.sale.id} sale={entry.sale} />;
+                        }
+                        const batchTotal = entry.sales.reduce((s, r) => s + r.total_amount, 0);
+                        const recorder = (entry.sales[0].recorded_by_profile as { full_name: string } | null)?.full_name ?? "—";
+                        return (
+                          <React.Fragment key={entry.batchId}>
+                            <tr className="bg-blue-50 border-b border-blue-100">
+                              <td colSpan={colSpan} className="px-4 py-2">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <Layers className="h-3.5 w-3.5 text-blue-500" />
+                                    <span className="text-xs font-medium text-blue-700">
+                                      Bulk entry · {entry.sales.length} orders · recorded by {recorder}
+                                    </span>
+                                  </div>
+                                  <span className="text-xs font-semibold text-blue-700">{formatCurrency(batchTotal)}</span>
+                                </div>
+                              </td>
+                            </tr>
+                            {entry.sales.map((sale) => <SaleRow key={sale.id} sale={sale} inBatch />)}
+                          </React.Fragment>
+                        );
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>
