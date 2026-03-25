@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { Plus, Phone, User, Wallet } from "lucide-react";
+import { Plus, Phone, User, Wallet, Pencil, Trash2 } from "lucide-react";
 
 interface Customer {
   id: string;
@@ -95,6 +95,24 @@ export function CreditClient({
     notes: "",
   });
   const [customerSaving, setCustomerSaving] = useState(false);
+
+  // Edit customer dialog
+  const [editCustomerDialog, setEditCustomerDialog] = useState({
+    open: false,
+    id: "",
+    name: "",
+    phone: "",
+    notes: "",
+  });
+  const [editCustomerSaving, setEditCustomerSaving] = useState(false);
+
+  // Delete customer dialog
+  const [deleteCustomerDialog, setDeleteCustomerDialog] = useState({
+    open: false,
+    id: "",
+    name: "",
+  });
+  const [deleteCustomerSaving, setDeleteCustomerSaving] = useState(false);
 
   // Per-customer aggregates
   function getBalance(customerId: string) {
@@ -202,6 +220,89 @@ export function CreditClient({
     setCustomerSaving(false);
   }
 
+  async function handleEditCustomer() {
+    if (!editCustomerDialog.name.trim()) {
+      toast({ title: "Name is required", variant: "destructive" });
+      return;
+    }
+    setEditCustomerSaving(true);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("customers")
+      .update({
+        full_name: editCustomerDialog.name.trim(),
+        phone: editCustomerDialog.phone.trim() || null,
+        notes: editCustomerDialog.notes.trim() || null,
+      })
+      .eq("id", editCustomerDialog.id);
+
+    if (error) {
+      toast({ title: "Failed to update customer", description: error.message, variant: "destructive" });
+      setEditCustomerSaving(false);
+      return;
+    }
+
+    await supabase.from("audit_logs").insert({
+      user_id: profile!.id,
+      action: "UPDATE_CUSTOMER",
+      entity_type: "customers",
+      entity_id: editCustomerDialog.id,
+      new_value: { full_name: editCustomerDialog.name.trim(), phone: editCustomerDialog.phone.trim() || null },
+    });
+
+    setCustomers((prev) =>
+      prev
+        .map((c) =>
+          c.id === editCustomerDialog.id
+            ? { ...c, full_name: editCustomerDialog.name.trim(), phone: editCustomerDialog.phone.trim() || null, notes: editCustomerDialog.notes.trim() || null }
+            : c,
+        )
+        .sort((a, b) => a.full_name.localeCompare(b.full_name)),
+    );
+    toast({ title: "Customer updated" });
+    setEditCustomerDialog((p) => ({ ...p, open: false }));
+    setEditCustomerSaving(false);
+  }
+
+  async function handleDeleteCustomer() {
+    const { totalCredit } = getBalance(deleteCustomerDialog.id);
+    if (totalCredit > 0) {
+      toast({
+        title: "Cannot delete customer",
+        description: "This customer has credit sales on record. Clear their history first.",
+        variant: "destructive",
+      });
+      setDeleteCustomerDialog((p) => ({ ...p, open: false }));
+      return;
+    }
+    setDeleteCustomerSaving(true);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("customers")
+      .delete()
+      .eq("id", deleteCustomerDialog.id);
+
+    if (error) {
+      toast({ title: "Failed to delete customer", description: error.message, variant: "destructive" });
+      setDeleteCustomerSaving(false);
+      return;
+    }
+
+    await supabase.from("audit_logs").insert({
+      user_id: profile!.id,
+      action: "DELETE_CUSTOMER",
+      entity_type: "customers",
+      entity_id: deleteCustomerDialog.id,
+      new_value: { full_name: deleteCustomerDialog.name },
+    });
+
+    setCustomers((prev) => prev.filter((c) => c.id !== deleteCustomerDialog.id));
+    if (selectedCustomerId === deleteCustomerDialog.id) setSelectedCustomerId(null);
+    toast({ title: "Customer deleted" });
+    setDeleteCustomerDialog((p) => ({ ...p, open: false }));
+    setDeleteCustomerSaving(false);
+  }
+
   return (
     <div className="flex flex-1 overflow-hidden">
       {/* ── Left panel: customer list ── */}
@@ -290,21 +391,53 @@ export function CreditClient({
                   <p className="text-slate-400 text-xs mt-1">{selectedCustomer.notes}</p>
                 )}
               </div>
-              <Button
-                onClick={() =>
-                  setPaymentDialog({
-                    open: true,
-                    customerId: selectedCustomer.id,
-                    amount: "",
-                    method: "cash",
-                    date: new Date().toISOString().split("T")[0],
-                    notes: "",
-                  })
-                }
-              >
-                <Wallet className="h-4 w-4 mr-2" />
-                Record Payment
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title="Edit customer"
+                  onClick={() =>
+                    setEditCustomerDialog({
+                      open: true,
+                      id: selectedCustomer.id,
+                      name: selectedCustomer.full_name,
+                      phone: selectedCustomer.phone ?? "",
+                      notes: selectedCustomer.notes ?? "",
+                    })
+                  }
+                >
+                  <Pencil className="h-4 w-4 text-slate-500" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title="Delete customer"
+                  onClick={() =>
+                    setDeleteCustomerDialog({
+                      open: true,
+                      id: selectedCustomer.id,
+                      name: selectedCustomer.full_name,
+                    })
+                  }
+                >
+                  <Trash2 className="h-4 w-4 text-red-400" />
+                </Button>
+                <Button
+                  onClick={() =>
+                    setPaymentDialog({
+                      open: true,
+                      customerId: selectedCustomer.id,
+                      amount: "",
+                      method: "cash",
+                      date: new Date().toISOString().split("T")[0],
+                      notes: "",
+                    })
+                  }
+                >
+                  <Wallet className="h-4 w-4 mr-2" />
+                  Record Payment
+                </Button>
+              </div>
             </div>
 
             {/* Balance summary cards */}
@@ -521,6 +654,81 @@ export function CreditClient({
             </Button>
             <Button onClick={handleRecordPayment} disabled={paymentSaving}>
               {paymentSaving ? "Saving..." : "Record Payment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Edit Customer Dialog ── */}
+      <Dialog
+        open={editCustomerDialog.open}
+        onOpenChange={(o) => setEditCustomerDialog((p) => ({ ...p, open: o }))}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Customer</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Full Name *</Label>
+              <Input
+                value={editCustomerDialog.name}
+                onChange={(e) => setEditCustomerDialog((p) => ({ ...p, name: e.target.value }))}
+                placeholder="Customer name"
+                autoFocus
+              />
+            </div>
+            <div>
+              <Label>Phone Number</Label>
+              <Input
+                value={editCustomerDialog.phone}
+                onChange={(e) => setEditCustomerDialog((p) => ({ ...p, phone: e.target.value }))}
+                placeholder="0XX XXX XXXX"
+              />
+            </div>
+            <div>
+              <Label>Notes (optional)</Label>
+              <Input
+                value={editCustomerDialog.notes}
+                onChange={(e) => setEditCustomerDialog((p) => ({ ...p, notes: e.target.value }))}
+                placeholder="Any additional info"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditCustomerDialog((p) => ({ ...p, open: false }))}>
+              Cancel
+            </Button>
+            <Button onClick={handleEditCustomer} disabled={editCustomerSaving}>
+              {editCustomerSaving ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Delete Customer Dialog ── */}
+      <Dialog
+        open={deleteCustomerDialog.open}
+        onOpenChange={(o) => setDeleteCustomerDialog((p) => ({ ...p, open: o }))}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Customer</DialogTitle>
+          </DialogHeader>
+          <div className="py-2 space-y-2">
+            <p className="text-sm text-slate-700">
+              Are you sure you want to delete <span className="font-semibold">{deleteCustomerDialog.name}</span>?
+            </p>
+            <p className="text-xs text-slate-500">
+              Customers with any recorded credit sales cannot be deleted.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteCustomerDialog((p) => ({ ...p, open: false }))}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteCustomer} disabled={deleteCustomerSaving}>
+              {deleteCustomerSaving ? "Deleting..." : "Delete Customer"}
             </Button>
           </DialogFooter>
         </DialogContent>

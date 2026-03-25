@@ -93,6 +93,7 @@ interface ExistingSale {
   delete_reason: string | null;
   created_at: string;
   batch_id: string | null;
+  customer_id: string | null;
   recorded_by_profile: { full_name: string } | null;
   items: Array<{
     id: string;
@@ -166,7 +167,7 @@ async function refreshSales(
     .select(
       `
       id, sale_date, total_amount, discount_amount, payment_method,
-      is_deleted, delete_reason, created_at,
+      is_deleted, delete_reason, created_at, customer_id,
       recorded_by_profile:profiles!sales_recorded_by_fkey(full_name),
       items:sale_items(
         id, product_id, quantity_kg, quantity_units, quantity_boxes,
@@ -262,9 +263,10 @@ export function SalesClient({
     saleId: string;
     sale_date: string;
     paymentMethod: PaymentMethod;
+    customer_id: string;
     notes: string;
     items: EditItem[];
-  }>({ open: false, saleId: "", sale_date: "", paymentMethod: "cash", notes: "", items: [] });
+  }>({ open: false, saleId: "", sale_date: "", paymentMethod: "cash", customer_id: "", notes: "", items: [] });
   const [editSaving, setEditSaving] = useState(false);
 
   const today = new Date().toISOString().split("T")[0];
@@ -675,6 +677,7 @@ export function SalesClient({
       saleId: sale.id,
       sale_date: sale.sale_date,
       paymentMethod: sale.payment_method as PaymentMethod,
+      customer_id: sale.customer_id ?? "",
       notes: "",
       items: (sale.items ?? []).map((item) => {
         const ut = (item.product as { name: string; unit_type: string } | null)?.unit_type ?? "units";
@@ -726,6 +729,7 @@ export function SalesClient({
 
     const { error: saleErr } = await supabase.from("sales").update({
       payment_method: editDialog.paymentMethod,
+      customer_id: editDialog.paymentMethod === "credit" ? (editDialog.customer_id || null) : null,
       total_amount: newTotal,
       sale_date: editDialog.sale_date,
     }).eq("id", editDialog.saleId);
@@ -784,7 +788,7 @@ export function SalesClient({
       .from("sales")
       .select(`
         id, sale_date, total_amount, discount_amount, payment_method,
-        is_deleted, delete_reason, created_at, batch_id,
+        is_deleted, delete_reason, created_at, batch_id, customer_id,
         recorded_by_profile:profiles!sales_recorded_by_fkey(full_name),
         items:sale_items(
           id, product_id, quantity_kg, quantity_units, quantity_boxes,
@@ -1970,16 +1974,54 @@ export function SalesClient({
                 <Label className="text-xs">Payment Method</Label>
                 <Select
                   value={editDialog.paymentMethod}
-                  onValueChange={(v) => setEditDialog((prev) => ({ ...prev, paymentMethod: v as PaymentMethod }))}
+                  onValueChange={(v) =>
+                    setEditDialog((prev) => ({
+                      ...prev,
+                      paymentMethod: v as PaymentMethod,
+                      customer_id: v !== "credit" ? "" : prev.customer_id,
+                    }))
+                  }
                 >
                   <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="cash">Cash</SelectItem>
                     <SelectItem value="mobile_money">Mobile Money</SelectItem>
+                    <SelectItem value="credit">Credit</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
+
+            {/* Customer (credit only) */}
+            {editDialog.paymentMethod === "credit" && (
+              <div>
+                <Label className="text-xs">Customer *</Label>
+                <div className="flex gap-2 mt-1">
+                  <Select
+                    value={editDialog.customer_id}
+                    onValueChange={(v) => setEditDialog((prev) => ({ ...prev, customer_id: v }))}
+                  >
+                    <SelectTrigger className="h-8 text-sm flex-1"><SelectValue placeholder="Select customer..." /></SelectTrigger>
+                    <SelectContent>
+                      {customers.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.full_name}{c.phone ? ` · ${c.phone}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    className="h-8 w-8"
+                    title="New customer"
+                    onClick={() => setNewCustomerDialog({ open: true, name: "", phone: "", source: "single" })}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {/* Items */}
             <div className="space-y-2">

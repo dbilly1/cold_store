@@ -33,7 +33,7 @@ export default async function SalesPage() {
     .from("sales")
     .select(`
       id, sale_date, total_amount, discount_amount, payment_method,
-      is_deleted, delete_reason, created_at,
+      is_deleted, delete_reason, created_at, customer_id,
       recorded_by_profile:profiles!sales_recorded_by_fkey(full_name),
       items:sale_items(
         id, product_id, quantity_kg, quantity_units, quantity_boxes,
