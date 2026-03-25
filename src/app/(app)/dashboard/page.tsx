@@ -1,7 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/layout/top-bar";
-
-export const dynamic = "force-dynamic";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
 import { DashboardCharts } from "./dashboard-charts";
@@ -11,6 +9,8 @@ import {
   DollarSign, Scale, Receipt, Banknote, Smartphone,
 } from "lucide-react";
 import { format, subDays } from "date-fns";
+
+export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -33,16 +33,23 @@ export default async function DashboardPage() {
     { data: weekSales },
     { data: todayExpenses },
     { count: openAlertsCount },
-    { data: lowStockProducts },
+    { data: allActiveProducts },
     { count: pendingAdjustments },
-    // Full today sales for salesperson table
-    { data: todaySalesFull },
   ] = await Promise.all([
+    // Single query used for both KPIs and the sales table
     supabase
       .from("sales")
-      .select("total_amount, payment_method, sale_items(quantity_kg, quantity_units, line_total, cost_price_at_sale)")
+      .select(`
+        id, created_at, total_amount, payment_method, customer_id,
+        items:sale_items(
+          id, quantity_kg, quantity_units, quantity_boxes,
+          line_total, cost_price_at_sale,
+          product:products(name, unit_type)
+        )
+      `)
       .eq("sale_date", today)
-      .eq("is_deleted", false),
+      .eq("is_deleted", false)
+      .order("created_at", { ascending: false }),
 
     supabase
       .from("sales")
@@ -60,38 +67,34 @@ export default async function DashboardPage() {
       .select("*", { count: "exact", head: true })
       .eq("status", "open"),
 
+    // Fetch all products — filter low stock in JS per unit_type
     supabase
       .from("products")
-      .select("id, name, current_stock_kg, current_stock_units, unit_type, low_stock_threshold")
-      .eq("is_active", true)
-      .filter("current_stock_kg", "lte", "low_stock_threshold")
-      .limit(5),
+      .select("id, name, current_stock_kg, current_stock_units, current_stock_boxes, unit_type, low_stock_threshold")
+      .eq("is_active", true),
 
     supabase
       .from("stock_adjustments")
       .select("*", { count: "exact", head: true })
       .eq("approval_status", "pending"),
-
-    supabase
-      .from("sales")
-      .select(`
-        id, created_at, total_amount, payment_method,
-        items:sale_items(
-          id, quantity_kg, quantity_units, quantity_boxes, line_total,
-          product:products(name, unit_type)
-        )
-      `)
-      .eq("sale_date", today)
-      .eq("is_deleted", false)
-      .order("created_at", { ascending: false }),
   ]);
+
+  // Low stock: compare the right column per unit_type
+  const lowStockProducts = (allActiveProducts ?? [])
+    .filter((p) => {
+      const threshold = p.low_stock_threshold ?? 0;
+      if (p.unit_type === "kg")    return p.current_stock_kg    <= threshold;
+      if (p.unit_type === "units") return p.current_stock_units <= threshold;
+      return p.current_stock_boxes <= threshold;
+    })
+    .slice(0, 5);
 
   // ── KPI Computations ─────────────────────────
   const todayRevenue   = todaySales?.reduce((s, s2) => s + s2.total_amount, 0) ?? 0;
   const todayCash      = todaySales?.filter(s => s.payment_method === "cash").reduce((s, s2) => s + s2.total_amount, 0) ?? 0;
   const todayMobile    = todaySales?.filter(s => s.payment_method === "mobile_money").reduce((s, s2) => s + s2.total_amount, 0) ?? 0;
-  const todayCOGS      = todaySales?.flatMap(s => s.sale_items ?? []).reduce((s, item) => {
-    const qty = (item.quantity_kg || 0) + (item.quantity_units || 0);
+  const todayCOGS      = todaySales?.flatMap(s => s.items ?? []).reduce((s, item) => {
+    const qty = (item.quantity_kg || 0) + (item.quantity_units || 0) + (item.quantity_boxes || 0);
     return s + qty * (item.cost_price_at_sale || 0);
   }, 0) ?? 0;
   const todayExpenseTotal = todayExpenses?.reduce((s, e) => s + e.amount, 0) ?? 0;
@@ -122,7 +125,7 @@ export default async function DashboardPage() {
     {
       title: "Cash Collected",
       value: formatCurrency(todayCash),
-      sub: `${todayCash > 0 ? ((todayCash / todayRevenue) * 100).toFixed(0) : 0}% of revenue`,
+      sub: `${todayRevenue > 0 ? ((todayCash / todayRevenue) * 100).toFixed(0) : 0}% of revenue`,
       icon: Banknote,
       color: "text-green-600",
       bg: "bg-green-50",
@@ -130,7 +133,7 @@ export default async function DashboardPage() {
     {
       title: "Mobile Money",
       value: formatCurrency(todayMobile),
-      sub: `${todayMobile > 0 ? ((todayMobile / todayRevenue) * 100).toFixed(0) : 0}% of revenue`,
+      sub: `${todayRevenue > 0 ? ((todayMobile / todayRevenue) * 100).toFixed(0) : 0}% of revenue`,
       icon: Smartphone,
       color: "text-purple-600",
       bg: "bg-purple-50",
@@ -188,11 +191,11 @@ export default async function DashboardPage() {
     },
     {
       title: "Low Stock Items",
-      value: String(lowStockProducts?.length ?? 0),
+      value: String(lowStockProducts.length),
       sub: "Need restocking",
       icon: Package,
-      color: (lowStockProducts?.length ?? 0) > 0 ? "text-amber-600" : "text-green-600",
-      bg: (lowStockProducts?.length ?? 0) > 0 ? "bg-amber-50" : "bg-green-50",
+      color: lowStockProducts.length > 0 ? "text-amber-600" : "text-green-600",
+      bg: lowStockProducts.length > 0 ? "bg-amber-50" : "bg-green-50",
     },
   ];
 
@@ -227,7 +230,7 @@ export default async function DashboardPage() {
         {/* Bottom section — role-specific */}
         {isSalesperson ? (
           /* Salesperson: full-width today's sales table */
-          <DashboardSalesTable sales={(todaySalesFull ?? []) as never} />
+          <DashboardSalesTable sales={(todaySales ?? []) as never} />
         ) : (
           /* Manager/Admin/Accountant: chart + low stock */
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -242,12 +245,15 @@ export default async function DashboardPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {lowStockProducts && lowStockProducts.length > 0 ? (
+                {lowStockProducts.length > 0 ? (
                   <div className="space-y-3">
                     {lowStockProducts.map((product) => {
-                      const stock = product.unit_type === "kg"
-                        ? `${product.current_stock_kg.toFixed(2)} kg`
-                        : `${product.current_stock_units} units`;
+                      const stock =
+                        product.unit_type === "kg"
+                          ? `${product.current_stock_kg.toFixed(2)} kg`
+                          : product.unit_type === "units"
+                          ? `${product.current_stock_units} units`
+                          : `${product.current_stock_boxes} boxes`;
                       return (
                         <div key={product.id} className="flex items-center justify-between py-2 border-b last:border-0">
                           <div>

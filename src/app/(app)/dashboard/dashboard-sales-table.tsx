@@ -87,8 +87,17 @@ export function DashboardSalesTable({ sales }: { sales: SaleRow[] }) {
                   </div>
                 </td>
                 <td className="px-4 py-2.5 text-center">
-                  <Badge variant={sale.payment_method === "cash" ? "secondary" : "outline"} className="text-xs">
-                    {sale.payment_method === "cash" ? "Cash" : "MoMo"}
+                  <Badge
+                    variant="outline"
+                    className={`text-xs ${
+                      sale.payment_method === "cash"
+                        ? "bg-green-50 text-green-700 border-green-200"
+                        : sale.payment_method === "mobile_money"
+                        ? "bg-purple-50 text-purple-700 border-purple-200"
+                        : "bg-orange-50 text-orange-700 border-orange-200"
+                    }`}
+                  >
+                    {sale.payment_method === "cash" ? "Cash" : sale.payment_method === "mobile_money" ? "MoMo" : "Credit"}
                   </Badge>
                 </td>
                 <td className="px-4 py-2.5 text-right font-semibold">
