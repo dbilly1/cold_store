@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/layout/top-bar";
 import { ExpensesClient } from "./expenses-client";
+
+export const dynamic = "force-dynamic";
 import { format, subDays } from "date-fns";
 
 export default async function ExpensesPage() {

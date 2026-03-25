@@ -2,6 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/layout/top-bar";
 import { CreditClient } from "./credit-client";
 
+export const dynamic = "force-dynamic";
+
 export default async function CreditPage() {
   const supabase = await createClient();
 

@@ -3,6 +3,8 @@ import { TopBar } from "@/components/layout/top-bar";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/utils";
 
+export const dynamic = "force-dynamic";
+
 export default async function AuditLogPage() {
   const supabase = await createClient();
   const { data: logs } = await supabase

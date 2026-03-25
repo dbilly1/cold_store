@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/layout/top-bar";
 import { ReconciliationClient } from "./reconciliation-client";
+
+export const dynamic = "force-dynamic";
 import { format, subDays } from "date-fns";
 
 export interface SessionExpense {
