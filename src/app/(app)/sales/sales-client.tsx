@@ -92,6 +92,7 @@ interface ExistingSale {
 interface BulkRow {
   id: string; // local key
   product_id: string;
+  unit_type: string;
   quantity: string;
   quantity_boxes: string;
   unit_price: string;
@@ -102,6 +103,7 @@ interface BulkRow {
 const newBulkRow = (): BulkRow => ({
   id: crypto.randomUUID(),
   product_id: "",
+  unit_type: "",
   quantity: "",
   quantity_boxes: "0",
   unit_price: "",
@@ -109,8 +111,11 @@ const newBulkRow = (): BulkRow => ({
   payment_method: "cash",
 });
 
-function bulkLineTotal(row: BulkRow) {
-  const qty = parseFloat(row.quantity) || 0;
+function bulkLineTotal(row: BulkRow, products: Product[]) {
+  const product = products.find((p) => p.id === row.product_id);
+  const qty = product?.unit_type === "boxes"
+    ? parseFloat(row.quantity_boxes) || 0
+    : parseFloat(row.quantity) || 0;
   const price = parseFloat(row.unit_price) || 0;
   const disc = parseFloat(row.discount) || 0;
   return Math.max(0, qty * price - disc);
@@ -326,13 +331,17 @@ export function SalesClient({
   // When product is selected in a bulk row, auto-fill price
   const onBulkProductChange = (rowId: string, productId: string) => {
     const product = products.find((p) => p.id === productId);
+    const isBoxes = product?.unit_type === "boxes";
     updateBulkRow(rowId, {
       product_id: productId,
+      unit_type: product?.unit_type ?? "",
       unit_price: product?.selling_price?.toString() ?? "",
+      quantity: isBoxes ? "" : "1",
+      quantity_boxes: isBoxes ? "1" : "0",
     });
   };
 
-  const bulkGrandTotal = bulkRows.reduce((s, r) => s + bulkLineTotal(r), 0);
+  const bulkGrandTotal = bulkRows.reduce((s, r) => s + bulkLineTotal(r, products), 0);
   const bulkValidRows = bulkRows.filter(
     (r) =>
       r.product_id &&
@@ -341,7 +350,11 @@ export function SalesClient({
 
   const handleBulkSave = async () => {
     if (bulkValidRows.length === 0) {
-      toast({ title: "No valid orders to save", description: "Each row needs a product and quantity.", variant: "destructive" });
+      toast({
+        title: "No valid orders to save",
+        description: "Each row needs a product and quantity.",
+        variant: "destructive",
+      });
       return;
     }
     setBulkSaving(true);
@@ -356,30 +369,41 @@ export function SalesClient({
       const qBoxes = parseFloat(row.quantity_boxes) || 0;
       const price = parseFloat(row.unit_price) || 0;
       const disc = parseFloat(row.discount) || 0;
-      const total = Math.max(0, qty * price - disc);
+      const effectiveQty = product.unit_type === "boxes" ? qBoxes : qty;
+      const total = Math.max(0, effectiveQty * price - disc);
 
       const { data: sale, error: saleErr } = await supabase
         .from("sales")
         .insert({
-          sale_date: saleDate, recorded_by: profile!.id,
-          total_amount: total, discount_amount: disc,
+          sale_date: saleDate,
+          recorded_by: profile!.id,
+          total_amount: total,
+          discount_amount: disc,
           payment_method: row.payment_method,
           notes: bulkNotes || null,
           is_deleted: false,
         })
-        .select().single();
+        .select()
+        .single();
 
       if (saleErr || !sale) {
-        results.push({ id: row.id, ok: false, msg: saleErr?.message ?? "Unknown error" });
+        results.push({
+          id: row.id,
+          ok: false,
+          msg: saleErr?.message ?? "Unknown error",
+        });
         continue;
       }
 
       const { error: itemErr } = await supabase.from("sale_items").insert({
-        sale_id: sale.id, product_id: product.id,
+        sale_id: sale.id,
+        product_id: product.id,
         quantity_kg: product.unit_type === "kg" ? qty : 0,
         quantity_units: product.unit_type === "units" ? qty : 0,
-        quantity_boxes: qBoxes, unit_price: price,
-        discount_amount: disc, line_total: total,
+        quantity_boxes: qBoxes,
+        unit_price: price,
+        discount_amount: disc,
+        line_total: total,
         cost_price_at_sale: product.weighted_avg_cost,
       });
 
@@ -389,8 +413,10 @@ export function SalesClient({
       } else {
         results.push({ id: row.id, ok: true });
         await supabase.from("audit_logs").insert({
-          user_id: profile!.id, action: "CREATE_SALE",
-          entity_type: "sales", entity_id: sale.id,
+          user_id: profile!.id,
+          action: "CREATE_SALE",
+          entity_type: "sales",
+          entity_id: sale.id,
           new_value: { total_amount: total, bulk: true },
         });
       }
@@ -403,34 +429,41 @@ export function SalesClient({
     if (bulkReconEnabled && saved > 0) {
       const sysCash = bulkValidRows
         .filter((r) => r.payment_method === "cash")
-        .reduce((s, r) => s + bulkLineTotal(r), 0);
+        .reduce((s, r) => s + bulkLineTotal(r, products), 0);
       const sysMobile = bulkValidRows
         .filter((r) => r.payment_method === "mobile_money")
-        .reduce((s, r) => s + bulkLineTotal(r), 0);
+        .reduce((s, r) => s + bulkLineTotal(r, products), 0);
       const actCash = parseFloat(bulkActualCash) || 0;
       const actMobile = parseFloat(bulkActualMobile) || 0;
-      const status = actCash === sysCash && actMobile === sysMobile ? "balanced" : "flagged";
+      const status =
+        actCash === sysCash && actMobile === sysMobile ? "balanced" : "flagged";
 
       const { data: reconData, error: reconErr } = await supabase
         .from("daily_reconciliations")
-        .upsert({
-          reconciliation_date: saleDate,
-          submitted_by: profile!.id,
-          system_cash_total: sysCash,
-          system_mobile_total: sysMobile,
-          actual_cash_entered: actCash,
-          actual_mobile_entered: actMobile,
-          status,
-          notes: bulkNotes || null,
-        }, { onConflict: "reconciliation_date" })
-        .select().single();
+        .upsert(
+          {
+            reconciliation_date: saleDate,
+            submitted_by: profile!.id,
+            system_cash_total: sysCash,
+            system_mobile_total: sysMobile,
+            actual_cash_entered: actCash,
+            actual_mobile_entered: actMobile,
+            status,
+            notes: bulkNotes || null,
+          },
+          { onConflict: "reconciliation_date" },
+        )
+        .select()
+        .single();
 
       if (!reconErr && reconData && status === "flagged") {
         await supabase.from("alerts").insert({
-          alert_type: "cash_mismatch", severity: "high",
+          alert_type: "cash_mismatch",
+          severity: "high",
           title: "Cash Reconciliation Mismatch",
           message: `Cash variance: ${formatCurrency(actCash - sysCash)}, Mobile variance: ${formatCurrency(actMobile - sysMobile)}`,
-          related_entity_type: "daily_reconciliations", related_entity_id: reconData.id,
+          related_entity_type: "daily_reconciliations",
+          related_entity_id: reconData.id,
         });
       }
     }
@@ -443,7 +476,9 @@ export function SalesClient({
     }
 
     if (failed === 0) {
-      toast({ title: `${saved} order${saved > 1 ? "s" : ""} saved${bulkReconEnabled ? " & reconciled" : ""}` });
+      toast({
+        title: `${saved} order${saved > 1 ? "s" : ""} saved${bulkReconEnabled ? " & reconciled" : ""}`,
+      });
       setBulkOpen(false);
       setBulkRows([newBulkRow()]);
       setBulkDate(today);
@@ -453,7 +488,11 @@ export function SalesClient({
       setBulkActualCash("");
       setBulkActualMobile("");
     } else {
-      toast({ title: `${saved} saved, ${failed} failed`, description: "Failed rows are highlighted — fix and retry.", variant: "destructive" });
+      toast({
+        title: `${saved} saved, ${failed} failed`,
+        description: "Failed rows are highlighted — fix and retry.",
+        variant: "destructive",
+      });
     }
 
     setBulkSaving(false);
@@ -520,7 +559,8 @@ export function SalesClient({
     const supabase = createClient();
     const { data } = await supabase
       .from("sales")
-      .select(`
+      .select(
+        `
         id, sale_date, total_amount, discount_amount, payment_method,
         is_deleted, delete_reason, created_at,
         recorded_by_profile:profiles!sales_recorded_by_fkey(full_name),
@@ -529,7 +569,8 @@ export function SalesClient({
           unit_price, discount_amount, line_total,
           product:products(name, unit_type)
         )
-      `)
+      `,
+      )
       .eq("sale_date", date)
       .eq("is_deleted", false)
       .order("created_at", { ascending: false });
@@ -744,7 +785,6 @@ export function SalesClient({
 
       {/* ── Right panel ── */}
       <div className="flex-1 overflow-y-auto p-6">
-
         {/* ─ Salesperson: today's sales cards ─ */}
         {isSalesperson && (
           <>
@@ -752,16 +792,21 @@ export function SalesClient({
               <h2 className="font-semibold text-slate-700">
                 Today&apos;s Sales
                 <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  ({activeSales.length} transaction{activeSales.length !== 1 ? "s" : ""})
+                  ({activeSales.length} transaction
+                  {activeSales.length !== 1 ? "s" : ""})
                 </span>
               </h2>
               <div className="text-right">
                 <p className="text-sm text-muted-foreground">Total</p>
-                <p className="text-xl font-bold text-blue-600">{formatCurrency(dailyTotal)}</p>
+                <p className="text-xl font-bold text-blue-600">
+                  {formatCurrency(dailyTotal)}
+                </p>
               </div>
             </div>
             {activeSales.length === 0 ? (
-              <div className="flex items-center justify-center h-48 text-muted-foreground">No sales recorded today</div>
+              <div className="flex items-center justify-center h-48 text-muted-foreground">
+                No sales recorded today
+              </div>
             ) : (
               <div className="space-y-3">
                 {activeSales.map((sale) => (
@@ -770,27 +815,72 @@ export function SalesClient({
                       <div className="flex items-start justify-between">
                         <div>
                           <div className="flex items-center gap-2 mb-1">
-                            <span className="font-semibold">{formatCurrency(sale.total_amount)}</span>
-                            <Badge variant={sale.payment_method === "cash" ? "secondary" : "outline"}>
-                              {sale.payment_method === "cash" ? "Cash" : "Mobile Money"}
+                            <span className="font-semibold">
+                              {formatCurrency(sale.total_amount)}
+                            </span>
+                            <Badge
+                              variant={
+                                sale.payment_method === "cash"
+                                  ? "secondary"
+                                  : "outline"
+                              }
+                            >
+                              {sale.payment_method === "cash"
+                                ? "Cash"
+                                : "Mobile Money"}
                             </Badge>
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            {formatDateTime(sale.created_at)} · {(sale.recorded_by_profile as { full_name: string } | null)?.full_name}
+                            {formatDateTime(sale.created_at)} ·{" "}
+                            {
+                              (
+                                sale.recorded_by_profile as {
+                                  full_name: string;
+                                } | null
+                              )?.full_name
+                            }
                           </p>
                           <div className="mt-2 space-y-0.5">
                             {sale.items?.map((item) => (
-                              <p key={item.id} className="text-xs text-slate-600">
-                                {(item.product as { name: string; unit_type: string } | null)?.name} ·{" "}
-                                {item.quantity_kg > 0 ? `${item.quantity_kg} kg` : `${item.quantity_units} units`}
-                                {item.quantity_boxes > 0 ? ` + ${item.quantity_boxes} boxes` : ""} · {formatCurrency(item.line_total)}
+                              <p
+                                key={item.id}
+                                className="text-xs text-slate-600"
+                              >
+                                {
+                                  (
+                                    item.product as {
+                                      name: string;
+                                      unit_type: string;
+                                    } | null
+                                  )?.name
+                                }{" "}
+                                ·{" "}
+                                {item.quantity_kg > 0
+                                  ? `${item.quantity_kg} kg`
+                                  : `${item.quantity_units} units`}
+                                {item.quantity_boxes > 0
+                                  ? ` + ${item.quantity_boxes} boxes`
+                                  : ""}{" "}
+                                · {formatCurrency(item.line_total)}
                               </p>
                             ))}
                           </div>
                         </div>
-                        {(profile?.role === "salesperson" || profile?.role === "supervisor" || profile?.role === "admin") && (
-                          <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                            onClick={() => setDeleteDialog({ open: true, saleId: sale.id, reason: "" })}>
+                        {(profile?.role === "salesperson" ||
+                          profile?.role === "supervisor" ||
+                          profile?.role === "admin") && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                            onClick={() =>
+                              setDeleteDialog({
+                                open: true,
+                                saleId: sale.id,
+                                reason: "",
+                              })
+                            }
+                          >
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         )}
@@ -808,21 +898,37 @@ export function SalesClient({
           <>
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold text-slate-700">All Sales</h2>
-              <p className="text-xs text-muted-foreground">Last 90 days · click a row to see transactions</p>
+              <p className="text-xs text-muted-foreground">
+                Last 90 days · click a row to see transactions
+              </p>
             </div>
             {dailySummaries.length === 0 ? (
-              <div className="flex items-center justify-center h-48 text-muted-foreground">No sales recorded yet</div>
+              <div className="flex items-center justify-center h-48 text-muted-foreground">
+                No sales recorded yet
+              </div>
             ) : (
               <div className="bg-white rounded-lg border overflow-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 border-b">
                     <tr>
-                      <th className="text-left p-3 font-medium text-slate-600">Date</th>
-                      <th className="text-center p-3 font-medium text-slate-600">Sales</th>
-                      <th className="text-right p-3 font-medium text-slate-600">Revenue</th>
-                      <th className="text-right p-3 font-medium text-slate-600">Cash</th>
-                      <th className="text-right p-3 font-medium text-slate-600">Mobile</th>
-                      <th className="text-center p-3 font-medium text-slate-600">Reconciliation</th>
+                      <th className="text-left p-3 font-medium text-slate-600">
+                        Date
+                      </th>
+                      <th className="text-center p-3 font-medium text-slate-600">
+                        Sales
+                      </th>
+                      <th className="text-right p-3 font-medium text-slate-600">
+                        Revenue
+                      </th>
+                      <th className="text-right p-3 font-medium text-slate-600">
+                        Cash
+                      </th>
+                      <th className="text-right p-3 font-medium text-slate-600">
+                        Mobile
+                      </th>
+                      <th className="text-center p-3 font-medium text-slate-600">
+                        Reconciliation
+                      </th>
                       <th className="w-8" />
                     </tr>
                   </thead>
@@ -841,27 +947,48 @@ export function SalesClient({
                           onClick={() => openDay(row.date)}
                         >
                           <td className="p-3">
-                            <span className="font-medium">{formatDate(row.date)}</span>
-                            {isToday && <Badge variant="secondary" className="ml-2 text-xs">Today</Badge>}
+                            <span className="font-medium">
+                              {formatDate(row.date)}
+                            </span>
+                            {isToday && (
+                              <Badge
+                                variant="secondary"
+                                className="ml-2 text-xs"
+                              >
+                                Today
+                              </Badge>
+                            )}
                           </td>
-                          <td className="p-3 text-center text-slate-600">{row.count}</td>
-                          <td className="p-3 text-right font-semibold">{formatCurrency(row.revenue)}</td>
-                          <td className="p-3 text-right text-slate-600">{formatCurrency(row.cash)}</td>
-                          <td className="p-3 text-right text-slate-600">{formatCurrency(row.mobile)}</td>
+                          <td className="p-3 text-center text-slate-600">
+                            {row.count}
+                          </td>
+                          <td className="p-3 text-right font-semibold">
+                            {formatCurrency(row.revenue)}
+                          </td>
+                          <td className="p-3 text-right text-slate-600">
+                            {formatCurrency(row.cash)}
+                          </td>
+                          <td className="p-3 text-right text-slate-600">
+                            {formatCurrency(row.mobile)}
+                          </td>
                           <td className="p-3 text-center">
                             {!hasRecon ? (
-                              <span className="text-xs text-slate-400">Not reconciled</span>
+                              <span className="text-xs text-slate-400">
+                                Not reconciled
+                              </span>
                             ) : totalVar === 0 ? (
                               <span className="inline-flex items-center gap-1 text-xs text-green-600 font-medium">
                                 <Minus className="h-3 w-3" /> Balanced
                               </span>
                             ) : totalVar > 0 ? (
                               <span className="inline-flex items-center gap-1 text-xs text-blue-600 font-medium">
-                                <TrendingUp className="h-3 w-3" /> +{formatCurrency(totalVar)}
+                                <TrendingUp className="h-3 w-3" /> +
+                                {formatCurrency(totalVar)}
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 text-xs text-red-600 font-medium">
-                                <TrendingDown className="h-3 w-3" /> {formatCurrency(totalVar)}
+                                <TrendingDown className="h-3 w-3" />{" "}
+                                {formatCurrency(totalVar)}
                               </span>
                             )}
                           </td>
@@ -883,7 +1010,15 @@ export function SalesClient({
           <>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
-                <Button variant="ghost" size="sm" className="gap-1" onClick={() => { setSelectedDate(null); setDayDetails([]); }}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => {
+                    setSelectedDate(null);
+                    setDayDetails([]);
+                  }}
+                >
                   <ChevronLeft className="h-4 w-4" /> Back
                 </Button>
                 <div>
@@ -891,7 +1026,9 @@ export function SalesClient({
                     {formatDate(selectedDate)}
                   </h2>
                   <p className="text-xs text-muted-foreground">
-                    {loadingDay ? "Loading..." : `${dayDetails.length} transaction${dayDetails.length !== 1 ? "s" : ""}`}
+                    {loadingDay
+                      ? "Loading..."
+                      : `${dayDetails.length} transaction${dayDetails.length !== 1 ? "s" : ""}`}
                   </p>
                 </div>
               </div>
@@ -899,63 +1036,99 @@ export function SalesClient({
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">Total</p>
                   <p className="text-lg font-bold text-blue-600">
-                    {formatCurrency(dayDetails.reduce((s, r) => s + r.total_amount, 0))}
+                    {formatCurrency(
+                      dayDetails.reduce((s, r) => s + r.total_amount, 0),
+                    )}
                   </p>
                 </div>
               )}
             </div>
 
             {loadingDay ? (
-              <div className="flex items-center justify-center h-48 text-muted-foreground">Loading transactions...</div>
+              <div className="flex items-center justify-center h-48 text-muted-foreground">
+                Loading transactions...
+              </div>
             ) : dayDetails.length === 0 ? (
-              <div className="flex items-center justify-center h-48 text-muted-foreground">No transactions found</div>
+              <div className="flex items-center justify-center h-48 text-muted-foreground">
+                No transactions found
+              </div>
             ) : (
               <div className="bg-white rounded-lg border overflow-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 border-b">
                     <tr>
-                      <th className="text-left p-3 font-medium text-slate-600">Time</th>
-                      <th className="text-left p-3 font-medium text-slate-600">Items</th>
-                      <th className="text-left p-3 font-medium text-slate-600">Recorded by</th>
-                      <th className="text-center p-3 font-medium text-slate-600">Payment</th>
-                      <th className="text-right p-3 font-medium text-slate-600">Amount</th>
-                      {(profile?.role === "supervisor" || profile?.role === "admin") && <th className="w-10" />}
+                      <th className="text-left px-4 py-3 font-medium text-slate-600 w-24">Time</th>
+                      <th className="text-left px-4 py-3 font-medium text-slate-600">Items</th>
+                      <th className="text-right px-4 py-3 font-medium text-slate-600 w-28">Qty</th>
+                      <th className="text-right px-4 py-3 font-medium text-slate-600 w-28">Unit Price</th>
+                      <th className="text-right px-4 py-3 font-medium text-slate-600 w-28">Amount</th>
+                      <th className="text-center px-4 py-3 font-medium text-slate-600 w-24">Payment</th>
+                      <th className="text-left px-4 py-3 font-medium text-slate-600 w-36">Recorded by</th>
+                      {(profile?.role === "supervisor" ||
+                        profile?.role === "admin") && <th className="w-10" />}
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {dayDetails.map((sale) => (
                       <tr key={sale.id} className="hover:bg-slate-50">
-                        <td className="p-3 text-xs text-slate-500 whitespace-nowrap">
+                        <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
                           {formatDateTime(sale.created_at).split(",")[1]?.trim() ?? formatDateTime(sale.created_at)}
                         </td>
-                        <td className="p-3">
-                          <div className="space-y-0.5">
+                        <td className="px-4 py-3">
+                          <div className="space-y-1">
                             {sale.items?.map((item) => {
                               const p = item.product as { name: string; unit_type: string } | null;
-                              const qtyStr = item.quantity_kg > 0 ? `${item.quantity_kg} kg`
-                                : item.quantity_units > 0 ? `${item.quantity_units} units`
-                                : `${item.quantity_boxes} boxes`;
                               return (
-                                <p key={item.id} className="text-xs">
-                                  {p?.name ?? "—"}<span className="text-slate-400 ml-1">· {qtyStr}</span>
-                                </p>
+                                <p key={item.id} className="text-xs">{p?.name ?? "—"}</p>
                               );
                             })}
                           </div>
                         </td>
-                        <td className="p-3 text-xs text-slate-500">
-                          {(sale.recorded_by_profile as { full_name: string } | null)?.full_name ?? "—"}
+                        <td className="px-4 py-3 text-right">
+                          <div className="space-y-1">
+                            {sale.items?.map((item) => {
+                              const qtyStr = item.quantity_kg > 0 ? `${item.quantity_kg} kg`
+                                : item.quantity_units > 0 ? `${item.quantity_units} units`
+                                : `${item.quantity_boxes} boxes`;
+                              return (
+                                <p key={item.id} className="text-xs text-slate-600">{qtyStr}</p>
+                              );
+                            })}
+                          </div>
                         </td>
-                        <td className="p-3 text-center">
+                        <td className="px-4 py-3 text-right">
+                          <div className="space-y-1">
+                            {sale.items?.map((item) => (
+                              <p key={item.id} className="text-xs text-slate-600">{formatCurrency(item.unit_price)}</p>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right font-semibold">
+                          {formatCurrency(sale.total_amount)}
+                        </td>
+                        <td className="px-4 py-3 text-center">
                           <Badge variant={sale.payment_method === "cash" ? "secondary" : "outline"} className="text-xs">
                             {sale.payment_method === "cash" ? "Cash" : "MoMo"}
                           </Badge>
                         </td>
-                        <td className="p-3 text-right font-semibold">{formatCurrency(sale.total_amount)}</td>
-                        {(profile?.role === "supervisor" || profile?.role === "admin") && (
+                        <td className="px-4 py-3 text-xs text-slate-500">
+                          {(sale.recorded_by_profile as { full_name: string } | null)?.full_name ?? "—"}
+                        </td>
+                        {(profile?.role === "supervisor" ||
+                          profile?.role === "admin") && (
                           <td className="p-3">
-                            <Button size="sm" variant="ghost" className="text-red-400 hover:text-red-600 hover:bg-red-50"
-                              onClick={() => setDeleteDialog({ open: true, saleId: sale.id, reason: "" })}>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-red-400 hover:text-red-600 hover:bg-red-50"
+                              onClick={() =>
+                                setDeleteDialog({
+                                  open: true,
+                                  saleId: sale.id,
+                                  reason: "",
+                                })
+                              }
+                            >
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </td>
@@ -1186,7 +1359,7 @@ export function SalesClient({
 
                       {/* Line total */}
                       <td className="px-2 py-2 align-middle text-right font-semibold rounded-r-none">
-                        {formatCurrency(bulkLineTotal(row))}
+                        {formatCurrency(bulkLineTotal(row, products))}
                       </td>
 
                       {/* Delete row */}
@@ -1231,9 +1404,12 @@ export function SalesClient({
               </div>
               <div className="text-right">
                 <p className="text-xs text-muted-foreground">
-                  {bulkValidRows.length} valid order{bulkValidRows.length !== 1 ? "s" : ""}
+                  {bulkValidRows.length} valid order
+                  {bulkValidRows.length !== 1 ? "s" : ""}
                 </p>
-                <p className="text-lg font-bold text-blue-600">{formatCurrency(bulkGrandTotal)}</p>
+                <p className="text-lg font-bold text-blue-600">
+                  {formatCurrency(bulkGrandTotal)}
+                </p>
               </div>
             </div>
 
@@ -1246,52 +1422,91 @@ export function SalesClient({
                   onChange={(e) => setBulkReconEnabled(e.target.checked)}
                   className="rounded"
                 />
-                <span className="text-sm font-medium">Reconcile this entry</span>
-                <span className="text-xs text-slate-400 ml-1">— enter actual cash & mobile collected for {bulkDate}</span>
+                <span className="text-sm font-medium">
+                  Reconcile this entry
+                </span>
+                <span className="text-xs text-slate-400 ml-1">
+                  — enter actual cash & mobile collected for {bulkDate}
+                </span>
               </label>
 
-              {bulkReconEnabled && (() => {
-                const sysCash = bulkValidRows.filter(r => r.payment_method === "cash").reduce((s, r) => s + bulkLineTotal(r), 0);
-                const sysMobile = bulkValidRows.filter(r => r.payment_method === "mobile_money").reduce((s, r) => s + bulkLineTotal(r), 0);
-                const actCash = parseFloat(bulkActualCash) || 0;
-                const actMobile = parseFloat(bulkActualMobile) || 0;
-                const cashVar = actCash - sysCash;
-                const mobileVar = actMobile - sysMobile;
-                return (
-                  <div className="px-4 pb-4 pt-2 bg-white border-t space-y-3">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <Label className="text-xs">Actual Cash <span className="text-slate-400">(system: {formatCurrency(sysCash)})</span></Label>
-                        <Input
-                          type="number" min="0" step="0.01" placeholder="0.00"
-                          value={bulkActualCash}
-                          onChange={(e) => setBulkActualCash(e.target.value)}
-                          className="h-8 text-sm"
-                        />
-                        {bulkActualCash && (
-                          <p className={`text-xs font-medium ${cashVar === 0 ? "text-green-600" : cashVar > 0 ? "text-blue-600" : "text-red-600"}`}>
-                            {cashVar === 0 ? "Balanced" : cashVar > 0 ? `+${formatCurrency(cashVar)} surplus` : `${formatCurrency(cashVar)} shortfall`}
-                          </p>
-                        )}
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Actual Mobile Money <span className="text-slate-400">(system: {formatCurrency(sysMobile)})</span></Label>
-                        <Input
-                          type="number" min="0" step="0.01" placeholder="0.00"
-                          value={bulkActualMobile}
-                          onChange={(e) => setBulkActualMobile(e.target.value)}
-                          className="h-8 text-sm"
-                        />
-                        {bulkActualMobile && (
-                          <p className={`text-xs font-medium ${mobileVar === 0 ? "text-green-600" : mobileVar > 0 ? "text-blue-600" : "text-red-600"}`}>
-                            {mobileVar === 0 ? "Balanced" : mobileVar > 0 ? `+${formatCurrency(mobileVar)} surplus` : `${formatCurrency(mobileVar)} shortfall`}
-                          </p>
-                        )}
+              {bulkReconEnabled &&
+                (() => {
+                  const sysCash = bulkValidRows
+                    .filter((r) => r.payment_method === "cash")
+                    .reduce((s, r) => s + bulkLineTotal(r, products), 0);
+                  const sysMobile = bulkValidRows
+                    .filter((r) => r.payment_method === "mobile_money")
+                    .reduce((s, r) => s + bulkLineTotal(r, products), 0);
+                  const actCash = parseFloat(bulkActualCash) || 0;
+                  const actMobile = parseFloat(bulkActualMobile) || 0;
+                  const cashVar = actCash - sysCash;
+                  const mobileVar = actMobile - sysMobile;
+                  return (
+                    <div className="px-4 pb-4 pt-2 bg-white border-t space-y-3">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <Label className="text-xs">
+                            Actual Cash{" "}
+                            <span className="text-slate-400">
+                              (system: {formatCurrency(sysCash)})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="0.00"
+                            value={bulkActualCash}
+                            onChange={(e) => setBulkActualCash(e.target.value)}
+                            className="h-8 text-sm"
+                          />
+                          {bulkActualCash && (
+                            <p
+                              className={`text-xs font-medium ${cashVar === 0 ? "text-green-600" : cashVar > 0 ? "text-blue-600" : "text-red-600"}`}
+                            >
+                              {cashVar === 0
+                                ? "Balanced"
+                                : cashVar > 0
+                                  ? `+${formatCurrency(cashVar)} surplus`
+                                  : `${formatCurrency(cashVar)} shortfall`}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">
+                            Actual Mobile Money{" "}
+                            <span className="text-slate-400">
+                              (system: {formatCurrency(sysMobile)})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="0.00"
+                            value={bulkActualMobile}
+                            onChange={(e) =>
+                              setBulkActualMobile(e.target.value)
+                            }
+                            className="h-8 text-sm"
+                          />
+                          {bulkActualMobile && (
+                            <p
+                              className={`text-xs font-medium ${mobileVar === 0 ? "text-green-600" : mobileVar > 0 ? "text-blue-600" : "text-red-600"}`}
+                            >
+                              {mobileVar === 0
+                                ? "Balanced"
+                                : mobileVar > 0
+                                  ? `+${formatCurrency(mobileVar)} surplus`
+                                  : `${formatCurrency(mobileVar)} shortfall`}
+                            </p>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })()}
+                  );
+                })()}
             </div>
             <DialogFooter className="sm:justify-between gap-2">
               <Button
