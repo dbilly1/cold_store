@@ -806,9 +806,9 @@ export function SalesClient({
 
   // ─────────────────────────────────────────────
   return (
-    <div className="flex-1 overflow-hidden flex flex-col lg:flex-row gap-0">
+    <div className="flex-1 overflow-y-auto lg:overflow-hidden flex flex-col lg:flex-row gap-0">
       {/* ── Left: Single Sale Form ── */}
-      <div className="lg:w-[420px] border-r bg-white flex flex-col h-full overflow-hidden">
+      <div className="lg:w-[420px] border-r bg-white flex flex-col lg:h-full lg:overflow-hidden">
         <div className="p-4 border-b flex items-center justify-between">
           <h2 className="font-semibold flex items-center gap-2">
             <ShoppingCart className="h-4 w-4 text-blue-500" />
@@ -1034,7 +1034,7 @@ export function SalesClient({
       </div>
 
       {/* ── Right panel ── */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 lg:overflow-y-auto p-6">
         {/* ─ Salesperson: today's sales cards ─ */}
         {isSalesperson && (
           <>

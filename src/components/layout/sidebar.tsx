@@ -29,7 +29,7 @@ const navItems: NavItem[] = [
   { label: "Reconciliation", href: "/reconciliation", icon: Calculator, roles: ["supervisor", "accountant", "admin"] },
   { label: "Stock Audits", href: "/audits", icon: ClipboardList, roles: ["supervisor", "admin"] },
   { label: "Expenses", href: "/expenses", icon: Receipt, roles: ["salesperson", "supervisor", "accountant", "admin"] },
-  { label: "Credit", href: "/credit", icon: CreditCard, roles: ["salesperson", "supervisor", "accountant", "admin"] },
+  { label: "Credit", href: "/credit", icon: CreditCard, roles: ["supervisor", "accountant", "admin"] },
   { label: "Sales History", href: "/sales-history", icon: History, roles: ["supervisor", "accountant", "admin"] },
   { label: "Reports", href: "/reports", icon: BarChart3, roles: ["supervisor", "accountant", "admin"] },
   { label: "Alerts", href: "/alerts", icon: Bell, roles: ["supervisor", "admin"] },
