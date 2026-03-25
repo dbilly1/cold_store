@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { Plus, Receipt } from "lucide-react";
+import { Plus, Receipt, Banknote } from "lucide-react";
 import { format } from "date-fns";
 import type { ExpenseCategory } from "@/types/database";
 
@@ -33,6 +33,7 @@ interface Expense {
   category: ExpenseCategory;
   description: string;
   amount: number;
+  paid_from_till: boolean;
   created_at: string;
   recorded_by_profile: { full_name: string } | null;
 }
@@ -48,6 +49,7 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
     category: "electricity" as ExpenseCategory,
     description: "",
     amount: "",
+    paid_from_till: false,
   });
 
   const totalThisMonth = expenses.reduce((s, e) => s + e.amount, 0);
@@ -70,6 +72,7 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
         category: form.category,
         description: form.description.trim(),
         amount,
+        paid_from_till: form.paid_from_till,
         recorded_by: profile!.id,
       })
       .select(`*, recorded_by_profile:profiles!expenses_recorded_by_fkey(full_name)`)
@@ -80,11 +83,11 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
       setExpenses([data as Expense, ...expenses]);
       await supabase.from("audit_logs").insert({
         user_id: profile!.id, action: "CREATE_EXPENSE", entity_type: "expenses", entity_id: data.id,
-        new_value: { category: form.category, amount, description: form.description },
+        new_value: { category: form.category, amount, description: form.description, paid_from_till: form.paid_from_till },
       });
       toast({ title: "Expense recorded" });
       setDialog(false);
-      setForm({ expense_date: format(new Date(), "yyyy-MM-dd"), category: "electricity", description: "", amount: "" });
+      setForm({ expense_date: format(new Date(), "yyyy-MM-dd"), category: "electricity", description: "", amount: "", paid_from_till: false });
     }
     setSaving(false);
   }
@@ -140,6 +143,7 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
                   <th className="text-left p-3 font-medium text-slate-600">Category</th>
                   <th className="text-left p-3 font-medium text-slate-600">Description</th>
                   <th className="text-right p-3 font-medium text-slate-600">Amount</th>
+                  <th className="text-center p-3 font-medium text-slate-600">Till</th>
                   <th className="text-left p-3 font-medium text-slate-600">By</th>
                 </tr>
               </thead>
@@ -154,6 +158,13 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
                     </td>
                     <td className="p-3 text-slate-600">{expense.description}</td>
                     <td className="p-3 text-right font-semibold">{formatCurrency(expense.amount)}</td>
+                    <td className="p-3 text-center">
+                      {expense.paid_from_till && (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                          <Banknote className="h-3 w-3" /> Till
+                        </span>
+                      )}
+                    </td>
                     <td className="p-3 text-xs text-slate-500">
                       {(expense.recorded_by_profile as { full_name: string } | null)?.full_name}
                     </td>
@@ -195,6 +206,15 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
               <Label>Amount (GHS) *</Label>
               <Input type="number" min="0" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
             </div>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={form.paid_from_till}
+                onChange={(e) => setForm({ ...form, paid_from_till: e.target.checked })}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              <span className="text-sm">Paid from daily cash (till)</span>
+            </label>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialog(false)}>Cancel</Button>
