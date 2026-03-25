@@ -33,6 +33,7 @@ import {
   CheckCircle,
   AlertCircle,
   ChevronRight,
+  ChevronDown,
   ChevronLeft,
   TrendingUp,
   TrendingDown,
@@ -550,6 +551,14 @@ export function SalesClient({
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [dayDetails, setDayDetails] = useState<ExistingSale[]>([]);
   const [loadingDay, setLoadingDay] = useState(false);
+  const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
+
+  const toggleBatch = (batchId: string) =>
+    setExpandedBatches((prev) => {
+      const next = new Set(prev);
+      next.has(batchId) ? next.delete(batchId) : next.add(batchId);
+      return next;
+    });
 
   const activeSales = sales.filter((s) => !s.is_deleted);
   const dailyTotal = activeSales.reduce((s, sale) => s + sale.total_amount, 0);
@@ -1020,6 +1029,7 @@ export function SalesClient({
                   onClick={() => {
                     setSelectedDate(null);
                     setDayDetails([]);
+                    setExpandedBatches(new Set());
                   }}
                 >
                   <ChevronLeft className="h-4 w-4" /> Back
@@ -1048,15 +1058,26 @@ export function SalesClient({
             </div>
 
             {loadingDay ? (
-              <div className="flex items-center justify-center h-48 text-muted-foreground">
-                Loading transactions...
-              </div>
+              <div className="flex items-center justify-center h-48 text-muted-foreground">Loading transactions...</div>
             ) : dayDetails.length === 0 ? (
-              <div className="flex items-center justify-center h-48 text-muted-foreground">
-                No transactions found
-              </div>
-            ) : (
-              <div className="bg-white rounded-lg border overflow-hidden">
+              <div className="flex items-center justify-center h-48 text-muted-foreground">No transactions found</div>
+            ) : (() => {
+              const canDelete = profile?.role === "supervisor" || profile?.role === "admin";
+
+              // Split into batches and solos
+              const batches: { batchId: string; sales: ExistingSale[] }[] = [];
+              const solos: ExistingSale[] = [];
+              const seen = new Set<string>();
+              for (const sale of dayDetails) {
+                if (!sale.batch_id) {
+                  solos.push(sale);
+                } else if (!seen.has(sale.batch_id)) {
+                  seen.add(sale.batch_id);
+                  batches.push({ batchId: sale.batch_id, sales: dayDetails.filter((s) => s.batch_id === sale.batch_id) });
+                }
+              }
+
+              const SaleTable = ({ sales }: { sales: ExistingSale[] }) => (
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 border-b">
                     <tr>
@@ -1067,111 +1088,125 @@ export function SalesClient({
                       <th className="text-right px-4 py-3 font-medium text-slate-600 w-28">Amount</th>
                       <th className="text-center px-4 py-3 font-medium text-slate-600 w-24">Payment</th>
                       <th className="text-left px-4 py-3 font-medium text-slate-600 w-36">Recorded by</th>
-                      {(profile?.role === "supervisor" ||
-                        profile?.role === "admin") && <th className="w-10" />}
+                      {canDelete && <th className="w-10" />}
                     </tr>
                   </thead>
-                  <tbody>
-                    {(() => {
-                      const canDelete = profile?.role === "supervisor" || profile?.role === "admin";
-                      const colSpan = canDelete ? 8 : 7;
-
-                      // Group sales: batch entries grouped by batch_id, individuals standalone
-                      const batchMap = new Map<string, ExistingSale[]>();
-                      const ordered: Array<{ type: "solo"; sale: ExistingSale } | { type: "batch"; batchId: string; sales: ExistingSale[] }> = [];
-                      const seen = new Set<string>();
-
-                      for (const sale of dayDetails) {
-                        if (!sale.batch_id) {
-                          ordered.push({ type: "solo", sale });
-                        } else if (!seen.has(sale.batch_id)) {
-                          seen.add(sale.batch_id);
-                          const group = dayDetails.filter((s) => s.batch_id === sale.batch_id);
-                          batchMap.set(sale.batch_id, group);
-                          ordered.push({ type: "batch", batchId: sale.batch_id, sales: group });
-                        }
-                      }
-
-                      const SaleRow = ({ sale, inBatch }: { sale: ExistingSale; inBatch?: boolean }) => (
-                        <tr key={sale.id} className={`hover:bg-slate-50 border-b ${inBatch ? "bg-blue-50/30" : ""}`}>
-                          <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
-                            {formatDateTime(sale.created_at).split(",")[1]?.trim() ?? formatDateTime(sale.created_at)}
+                  <tbody className="divide-y">
+                    {sales.map((sale) => (
+                      <tr key={sale.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
+                          {formatDateTime(sale.created_at).split(",")[1]?.trim() ?? formatDateTime(sale.created_at)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="space-y-1">
+                            {sale.items?.map((item) => {
+                              const p = item.product as { name: string; unit_type: string } | null;
+                              return <p key={item.id} className="text-xs">{p?.name ?? "—"}</p>;
+                            })}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="space-y-1">
+                            {sale.items?.map((item) => {
+                              const qtyStr = item.quantity_kg > 0 ? `${item.quantity_kg} kg`
+                                : item.quantity_units > 0 ? `${item.quantity_units} units`
+                                : `${item.quantity_boxes} boxes`;
+                              return <p key={item.id} className="text-xs text-slate-600">{qtyStr}</p>;
+                            })}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="space-y-1">
+                            {sale.items?.map((item) => (
+                              <p key={item.id} className="text-xs text-slate-600">{formatCurrency(item.unit_price)}</p>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right font-semibold">{formatCurrency(sale.total_amount)}</td>
+                        <td className="px-4 py-3 text-center">
+                          <Badge variant={sale.payment_method === "cash" ? "secondary" : "outline"} className="text-xs">
+                            {sale.payment_method === "cash" ? "Cash" : "MoMo"}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-slate-500">
+                          {(sale.recorded_by_profile as { full_name: string } | null)?.full_name ?? "—"}
+                        </td>
+                        {canDelete && (
+                          <td className="px-2 py-3">
+                            <Button size="sm" variant="ghost" className="text-red-400 hover:text-red-600 hover:bg-red-50"
+                              onClick={() => setDeleteDialog({ open: true, saleId: sale.id, reason: "" })}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
                           </td>
-                          <td className="px-4 py-3">
-                            <div className="space-y-1">
-                              {sale.items?.map((item) => {
-                                const p = item.product as { name: string; unit_type: string } | null;
-                                return <p key={item.id} className="text-xs">{p?.name ?? "—"}</p>;
-                              })}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="space-y-1">
-                              {sale.items?.map((item) => {
-                                const qtyStr = item.quantity_kg > 0 ? `${item.quantity_kg} kg`
-                                  : item.quantity_units > 0 ? `${item.quantity_units} units`
-                                  : `${item.quantity_boxes} boxes`;
-                                return <p key={item.id} className="text-xs text-slate-600">{qtyStr}</p>;
-                              })}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="space-y-1">
-                              {sale.items?.map((item) => (
-                                <p key={item.id} className="text-xs text-slate-600">{formatCurrency(item.unit_price)}</p>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-right font-semibold">{formatCurrency(sale.total_amount)}</td>
-                          <td className="px-4 py-3 text-center">
-                            <Badge variant={sale.payment_method === "cash" ? "secondary" : "outline"} className="text-xs">
-                              {sale.payment_method === "cash" ? "Cash" : "MoMo"}
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-3 text-xs text-slate-500">
-                            {(sale.recorded_by_profile as { full_name: string } | null)?.full_name ?? "—"}
-                          </td>
-                          {canDelete && (
-                            <td className="px-2 py-3">
-                              <Button size="sm" variant="ghost" className="text-red-400 hover:text-red-600 hover:bg-red-50"
-                                onClick={() => setDeleteDialog({ open: true, saleId: sale.id, reason: "" })}>
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </td>
-                          )}
-                        </tr>
-                      );
-
-                      return ordered.map((entry) => {
-                        if (entry.type === "solo") {
-                          return <SaleRow key={entry.sale.id} sale={entry.sale} />;
-                        }
-                        const batchTotal = entry.sales.reduce((s, r) => s + r.total_amount, 0);
-                        const recorder = (entry.sales[0].recorded_by_profile as { full_name: string } | null)?.full_name ?? "—";
-                        return (
-                          <React.Fragment key={entry.batchId}>
-                            <tr className="bg-blue-50 border-b border-blue-100">
-                              <td colSpan={colSpan} className="px-4 py-2">
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-2">
-                                    <Layers className="h-3.5 w-3.5 text-blue-500" />
-                                    <span className="text-xs font-medium text-blue-700">
-                                      Bulk entry · {entry.sales.length} orders · recorded by {recorder}
-                                    </span>
-                                  </div>
-                                  <span className="text-xs font-semibold text-blue-700">{formatCurrency(batchTotal)}</span>
-                                </div>
-                              </td>
-                            </tr>
-                            {entry.sales.map((sale) => <SaleRow key={sale.id} sale={sale} inBatch />)}
-                          </React.Fragment>
-                        );
-                      });
-                    })()}
+                        )}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
-              </div>
-            )}
+              );
+
+              return (
+                <div className="space-y-4">
+                  {/* ── Bulk Entries ── */}
+                  {batches.length > 0 && (
+                    <div>
+                      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                        Bulk Entries ({batches.length})
+                      </h3>
+                      <div className="space-y-2">
+                        {batches.map(({ batchId, sales }) => {
+                          const batchTotal = sales.reduce((s, r) => s + r.total_amount, 0);
+                          const recorder = (sales[0].recorded_by_profile as { full_name: string } | null)?.full_name ?? "—";
+                          const time = formatDateTime(sales[0].created_at).split(",")[1]?.trim() ?? "";
+                          const isExpanded = expandedBatches.has(batchId);
+                          return (
+                            <div key={batchId} className="border rounded-lg overflow-hidden">
+                              <button
+                                className="w-full flex items-center justify-between px-4 py-3 bg-blue-50 hover:bg-blue-100 transition-colors text-left"
+                                onClick={() => toggleBatch(batchId)}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <Layers className="h-4 w-4 text-blue-500 shrink-0" />
+                                  <div>
+                                    <span className="text-sm font-medium text-blue-800">
+                                      {sales.length} order{sales.length !== 1 ? "s" : ""}
+                                    </span>
+                                    <span className="text-xs text-blue-600 ml-3">· {time} · {recorder}</span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <span className="text-sm font-semibold text-blue-800">{formatCurrency(batchTotal)}</span>
+                                  {isExpanded
+                                    ? <ChevronDown className="h-4 w-4 text-blue-500" />
+                                    : <ChevronRight className="h-4 w-4 text-blue-500" />}
+                                </div>
+                              </button>
+                              {isExpanded && (
+                                <div className="border-t">
+                                  <SaleTable sales={sales} />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Direct Entries ── */}
+                  {solos.length > 0 && (
+                    <div>
+                      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                        Direct Entries ({solos.length})
+                      </h3>
+                      <div className="bg-white rounded-lg border overflow-hidden">
+                        <SaleTable sales={solos} />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </>
         )}
       </div>
