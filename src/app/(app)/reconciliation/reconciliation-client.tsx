@@ -10,7 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { CheckCircle, AlertTriangle, Calculator } from "lucide-react";
+import { CheckCircle, AlertTriangle, Calculator, Minus } from "lucide-react";
+import type { DayWithSales } from "./page";
 
 interface Reconciliation {
   id: string;
@@ -28,26 +29,47 @@ interface Reconciliation {
 }
 
 export function ReconciliationClient({
-  systemCash, systemMobile, existing, history: initial, today,
+  today,
+  daysWithSales,
+  reconciliations: initialRecons,
 }: {
-  systemCash: number;
-  systemMobile: number;
-  existing: Reconciliation | null;
-  history: Reconciliation[];
   today: string;
+  daysWithSales: DayWithSales[];
+  reconciliations: Reconciliation[];
 }) {
   const { toast } = useToast();
   const { profile } = useProfile();
-  const [history, setHistory] = useState<Reconciliation[]>(initial);
-  const [actualCash, setActualCash] = useState(existing?.actual_cash_entered.toString() ?? "");
-  const [actualMobile, setActualMobile] = useState(existing?.actual_mobile_entered.toString() ?? "");
-  const [notes, setNotes] = useState(existing?.notes ?? "");
+  const [reconciliations, setReconciliations] = useState<Reconciliation[]>(initialRecons);
+  const [selectedDate, setSelectedDate] = useState(today);
   const [saving, setSaving] = useState(false);
-  const [submitted, setSubmitted] = useState(!!existing);
+
+  // Form state for selected date
+  const [actualCash, setActualCash] = useState("");
+  const [actualMobile, setActualMobile] = useState("");
+  const [notes, setNotes] = useState("");
+
+  // Derive current values from selected date
+  const dayData = daysWithSales.find((d) => d.date === selectedDate);
+  const systemCash = dayData?.system_cash ?? 0;
+  const systemMobile = dayData?.system_mobile ?? 0;
+  const existing = reconciliations.find((r) => r.reconciliation_date === selectedDate);
+
+  // When switching dates, populate form from existing reconciliation
+  function selectDate(date: string) {
+    setSelectedDate(date);
+    const rec = reconciliations.find((r) => r.reconciliation_date === date);
+    setActualCash(rec?.actual_cash_entered?.toString() ?? "");
+    setActualMobile(rec?.actual_mobile_entered?.toString() ?? "");
+    setNotes(rec?.notes ?? "");
+  }
 
   const cashVariance = (parseFloat(actualCash) || 0) - systemCash;
   const mobileVariance = (parseFloat(actualMobile) || 0) - systemMobile;
   const isBalanced = cashVariance === 0 && mobileVariance === 0;
+  const isSubmitted = !!existing && !actualCash && !actualMobile
+    ? true
+    : existing?.actual_cash_entered?.toString() === actualCash &&
+      existing?.actual_mobile_entered?.toString() === actualMobile;
 
   async function handleSubmit() {
     if (!actualCash && !actualMobile) {
@@ -65,7 +87,7 @@ export function ReconciliationClient({
     const { data, error } = await supabase
       .from("daily_reconciliations")
       .upsert({
-        reconciliation_date: today,
+        reconciliation_date: selectedDate,
         submitted_by: profile!.id,
         system_cash_total: systemCash,
         system_mobile_total: systemMobile,
@@ -87,18 +109,22 @@ export function ReconciliationClient({
       await supabase.from("alerts").insert({
         alert_type: "cash_mismatch", severity: "high",
         title: "Cash Reconciliation Mismatch",
-        message: `Cash variance: ${formatCurrency(cashV)}, Mobile variance: ${formatCurrency(mobileV)}`,
+        message: `${formatDate(selectedDate)} — Cash variance: ${formatCurrency(cashV)}, Mobile: ${formatCurrency(mobileV)}`,
         related_entity_type: "daily_reconciliations", related_entity_id: data.id,
       });
     }
 
     await supabase.from("audit_logs").insert({
-      user_id: profile!.id, action: "SUBMIT_RECONCILIATION", entity_type: "daily_reconciliations",
-      entity_id: data.id, new_value: { cash_variance: cashV, mobile_variance: mobileV, status },
+      user_id: profile!.id, action: "SUBMIT_RECONCILIATION",
+      entity_type: "daily_reconciliations", entity_id: data.id,
+      new_value: { date: selectedDate, cash_variance: cashV, mobile_variance: mobileV, status },
     });
 
-    setHistory([data as Reconciliation, ...history.filter(h => h.reconciliation_date !== today)]);
-    setSubmitted(true);
+    setReconciliations([
+      data as Reconciliation,
+      ...reconciliations.filter(r => r.reconciliation_date !== selectedDate),
+    ]);
+
     toast({
       title: status === "balanced" ? "Balanced! All clear." : "Mismatch flagged — supervisor notified.",
       variant: status === "balanced" ? "success" as never : "destructive",
@@ -112,34 +138,68 @@ export function ReconciliationClient({
     return <Badge variant="secondary">Pending</Badge>;
   };
 
+  // Build the right-panel list: all days with sales + reconciliation status
+  const reconMap = new Map(reconciliations.map((r) => [r.reconciliation_date, r]));
+  const allDays = [...daysWithSales];
+  // Add days that have reconciliations but no sales records in daysWithSales
+  reconciliations.forEach((r) => {
+    if (!allDays.find((d) => d.date === r.reconciliation_date)) {
+      allDays.push({ date: r.reconciliation_date, system_cash: r.system_cash_total, system_mobile: r.system_mobile_total });
+    }
+  });
+  allDays.sort((a, b) => b.date.localeCompare(a.date));
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Today's Reconciliation */}
+
+        {/* ── Left: Reconciliation Form ── */}
         <div className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Calculator className="h-4 w-4 text-blue-500" />
-                Today&apos;s Reconciliation
-              </CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Calculator className="h-4 w-4 text-blue-500" />
+                  Reconcile a Day
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm">Date</Label>
+                  <Input
+                    type="date"
+                    value={selectedDate}
+                    max={today}
+                    onChange={(e) => selectDate(e.target.value)}
+                    className="h-8 text-sm w-36"
+                  />
+                </div>
+              </div>
+              {selectedDate !== today && (
+                <p className="text-xs text-amber-600 font-medium">Backdated entry for {formatDate(selectedDate)}</p>
+              )}
             </CardHeader>
             <CardContent className="space-y-4">
+
               {/* System totals */}
               <div className="bg-slate-50 rounded-lg p-4 space-y-2">
-                <p className="text-sm font-medium text-slate-600 mb-2">System Totals</p>
-                <div className="flex justify-between text-sm">
-                  <span>Cash Sales</span>
-                  <span className="font-semibold">{formatCurrency(systemCash)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Mobile Money</span>
-                  <span className="font-semibold">{formatCurrency(systemMobile)}</span>
-                </div>
-                <div className="flex justify-between font-bold border-t pt-2">
-                  <span>Total</span>
-                  <span>{formatCurrency(systemCash + systemMobile)}</span>
-                </div>
+                <p className="text-sm font-medium text-slate-600 mb-2">System Totals for {formatDate(selectedDate)}</p>
+                {systemCash === 0 && systemMobile === 0 ? (
+                  <p className="text-sm text-slate-400">No sales recorded for this date</p>
+                ) : (
+                  <>
+                    <div className="flex justify-between text-sm">
+                      <span>Cash Sales</span>
+                      <span className="font-semibold">{formatCurrency(systemCash)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span>Mobile Money</span>
+                      <span className="font-semibold">{formatCurrency(systemMobile)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold border-t pt-2">
+                      <span>Total</span>
+                      <span>{formatCurrency(systemCash + systemMobile)}</span>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Actual entry */}
@@ -151,7 +211,7 @@ export function ReconciliationClient({
                     type="number" min="0" step="0.01"
                     value={actualCash}
                     onChange={(e) => setActualCash(e.target.value)}
-                    disabled={submitted}
+                    placeholder="0.00"
                   />
                   {actualCash && (
                     <p className={`text-xs font-medium ${cashVariance === 0 ? "text-green-600" : "text-red-600"}`}>
@@ -165,7 +225,7 @@ export function ReconciliationClient({
                     type="number" min="0" step="0.01"
                     value={actualMobile}
                     onChange={(e) => setActualMobile(e.target.value)}
-                    disabled={submitted}
+                    placeholder="0.00"
                   />
                   {actualMobile && (
                     <p className={`text-xs font-medium ${mobileVariance === 0 ? "text-green-600" : "text-red-600"}`}>
@@ -175,76 +235,100 @@ export function ReconciliationClient({
                 </div>
                 <div className="space-y-1">
                   <Label>Notes</Label>
-                  <Input value={notes} onChange={(e) => setNotes(e.target.value)} disabled={submitted} placeholder="Optional explanation..." />
+                  <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional explanation..." />
                 </div>
               </div>
 
-              {/* Result preview */}
+              {/* Live balance indicator */}
               {(actualCash || actualMobile) && (
                 <div className={`rounded-lg p-3 flex items-center gap-2 ${isBalanced ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
                   {isBalanced
                     ? <CheckCircle className="h-4 w-4 flex-shrink-0" />
-                    : <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-                  }
+                    : <AlertTriangle className="h-4 w-4 flex-shrink-0" />}
                   <p className="text-sm font-medium">
                     {isBalanced ? "All amounts match — balanced!" : "Discrepancy detected — will be flagged"}
                   </p>
                 </div>
               )}
 
-              {!submitted ? (
-                <Button onClick={handleSubmit} className="w-full" disabled={saving}>
-                  {saving ? "Submitting..." : "Submit Reconciliation"}
-                </Button>
-              ) : (
-                <div className="flex items-center gap-2 text-green-600 text-sm justify-center">
-                  <CheckCircle className="h-4 w-4" />
-                  Reconciliation submitted for today
-                </div>
-              )}
+              <Button onClick={handleSubmit} className="w-full" disabled={saving}>
+                {saving ? "Submitting..." : existing ? "Update Reconciliation" : "Submit Reconciliation"}
+              </Button>
             </CardContent>
           </Card>
         </div>
 
-        {/* History */}
+        {/* ── Right: All days status list ── */}
         <div>
-          <h3 className="font-semibold mb-3 text-slate-700">Recent History</h3>
-          <div className="space-y-2">
-            {history.map((rec) => (
-              <Card key={rec.id} className={rec.status === "flagged" ? "border-red-200" : ""}>
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="font-medium text-sm">{formatDate(rec.reconciliation_date)}</p>
-                      <p className="text-xs text-muted-foreground">
-                        by {(rec.submitted_by_profile as { full_name: string } | null)?.full_name}
-                      </p>
-                    </div>
-                    {statusBadge(rec.status)}
-                  </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <span className="text-muted-foreground">Cash Variance: </span>
-                      <span className={rec.cash_variance !== 0 ? "text-red-600 font-semibold" : "text-green-600"}>
-                        {rec.cash_variance > 0 ? "+" : ""}{formatCurrency(rec.cash_variance)}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Mobile Variance: </span>
-                      <span className={rec.mobile_variance !== 0 ? "text-red-600 font-semibold" : "text-green-600"}>
-                        {rec.mobile_variance > 0 ? "+" : ""}{formatCurrency(rec.mobile_variance)}
-                      </span>
-                    </div>
-                  </div>
-                  {rec.notes && <p className="text-xs text-slate-500 mt-1 italic">{rec.notes}</p>}
-                </CardContent>
-              </Card>
-            ))}
-            {history.length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-8">No reconciliation history</p>
-            )}
+          <h3 className="font-semibold mb-3 text-slate-700">Reconciliation Status — Last 30 Days</h3>
+          <div className="bg-white rounded-lg border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 border-b">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium text-slate-500 text-xs">Date</th>
+                  <th className="text-right px-4 py-2 font-medium text-slate-500 text-xs">Cash</th>
+                  <th className="text-right px-4 py-2 font-medium text-slate-500 text-xs">Mobile</th>
+                  <th className="text-center px-4 py-2 font-medium text-slate-500 text-xs">Status</th>
+                  <th className="text-right px-4 py-2 font-medium text-slate-500 text-xs">Variance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {allDays.map((day) => {
+                  const rec = reconMap.get(day.date);
+                  const isSelected = day.date === selectedDate;
+                  const totalVar = (rec?.cash_variance ?? 0) + (rec?.mobile_variance ?? 0);
+
+                  return (
+                    <tr
+                      key={day.date}
+                      className={`cursor-pointer hover:bg-slate-50 ${isSelected ? "bg-blue-50 hover:bg-blue-50" : ""}`}
+                      onClick={() => selectDate(day.date)}
+                    >
+                      <td className="px-4 py-2.5">
+                        <span className={`font-medium ${isSelected ? "text-blue-700" : ""}`}>
+                          {formatDate(day.date)}
+                        </span>
+                        {day.date === today && (
+                          <Badge variant="secondary" className="ml-2 text-xs">Today</Badge>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-xs text-slate-600">
+                        {formatCurrency(day.system_cash)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-xs text-slate-600">
+                        {formatCurrency(day.system_mobile)}
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        {!rec ? (
+                          <span className="text-xs text-slate-400">Pending</span>
+                        ) : (
+                          statusBadge(rec.status)
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-xs">
+                        {rec ? (
+                          <span className={totalVar === 0 ? "text-green-600" : totalVar > 0 ? "text-blue-600" : "text-red-600"}>
+                            {totalVar === 0
+                              ? <Minus className="h-3 w-3 inline" />
+                              : totalVar > 0 ? `+${formatCurrency(totalVar)}` : formatCurrency(totalVar)}
+                          </span>
+                        ) : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {allDays.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                      No sales data in the last 30 days
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
+
       </div>
     </div>
   );
