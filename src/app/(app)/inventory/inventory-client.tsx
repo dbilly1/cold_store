@@ -314,7 +314,10 @@ export function InventoryClient({ products: initial, categories }: { products: P
             <div>
               <p className="text-2xl font-bold">
                 {formatCurrency(products.reduce((s, p) => {
-                  const qty = p.unit_type === "kg" ? p.current_stock_kg : p.current_stock_units;
+                  const qty =
+                    p.unit_type === "kg"    ? p.current_stock_kg :
+                    p.unit_type === "units" ? p.current_stock_units :
+                                             p.current_stock_boxes;
                   return s + qty * p.weighted_avg_cost;
                 }, 0))}
               </p>
@@ -332,7 +335,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
               <th className="text-left p-3 font-medium text-slate-600">Product</th>
               <th className="text-left p-3 font-medium text-slate-600">Category</th>
               <th className="text-right p-3 font-medium text-slate-600">Stock</th>
-              <th className="text-right p-3 font-medium text-slate-600">Boxes</th>
+              <th className="text-right p-3 font-medium text-slate-600">Est. Boxes</th>
               <th className="text-right p-3 font-medium text-slate-600">Avg Cost</th>
               <th className="text-right p-3 font-medium text-slate-600">Sell Price</th>
               <th className="text-center p-3 font-medium text-slate-600">Status</th>
@@ -356,7 +359,19 @@ export function InventoryClient({ products: initial, categories }: { products: P
                   <td className="p-3 text-right">
                     <span className={low ? "text-red-600 font-semibold" : ""}>{stockDisplay(product)}</span>
                   </td>
-                  <td className="p-3 text-right text-slate-600">{Number(product.current_stock_boxes).toFixed(2)}</td>
+                  <td className="p-3 text-right text-slate-600">
+                    {product.unit_type === "boxes"
+                      ? Number(product.current_stock_boxes).toFixed(2)
+                      : product.units_per_box && product.units_per_box > 0
+                        ? <>
+                            <span className="text-xs text-slate-400">~</span>
+                            {(
+                              (product.unit_type === "kg" ? product.current_stock_kg : product.current_stock_units)
+                              / product.units_per_box
+                            ).toFixed(2)}
+                          </>
+                        : <span className="text-slate-300">—</span>}
+                  </td>
                   <td className="p-3 text-right">{formatCurrency(product.weighted_avg_cost)}</td>
                   <td className="p-3 text-right">
                     <div>{formatCurrency(product.selling_price)}</div>
