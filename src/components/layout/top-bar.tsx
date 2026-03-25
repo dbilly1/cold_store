@@ -1,16 +1,28 @@
 "use client";
 
 import { useProfile } from "@/hooks/use-profile";
-import { Bell } from "lucide-react";
+import { Bell, Menu } from "lucide-react";
 import Link from "next/link";
 import { formatDate } from "@/lib/utils";
+import { useSidebarContext } from "./sidebar-context";
 
 export function TopBar({ title }: { title: string }) {
   const { profile } = useProfile();
+  const { open } = useSidebarContext();
 
   return (
-    <header className="h-16 border-b bg-white px-6 flex items-center justify-between flex-shrink-0">
-      <h1 className="text-lg font-semibold text-slate-800">{title}</h1>
+    <header className="h-16 border-b bg-white px-4 sm:px-6 flex items-center justify-between flex-shrink-0">
+      <div className="flex items-center gap-3">
+        {/* Hamburger — mobile only */}
+        <button
+          onClick={open}
+          className="lg:hidden p-2 rounded-md text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+          aria-label="Open menu"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+        <h1 className="text-lg font-semibold text-slate-800">{title}</h1>
+      </div>
       <div className="flex items-center gap-4">
         <span className="text-sm text-slate-500">{formatDate(new Date())}</span>
         {(profile?.role === "admin" || profile?.role === "supervisor") && (

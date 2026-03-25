@@ -9,9 +9,10 @@ import { getRoleLabel, getRoleBadgeColor } from "@/lib/utils";
 import {
   LayoutDashboard, ShoppingCart, Package, Sliders, ClipboardList,
   Calculator, Receipt, BarChart3, Bell, ScrollText, Settings,
-  LogOut, Snowflake, Users, ChevronRight, CreditCard, History,
+  LogOut, Snowflake, Users, ChevronRight, CreditCard, History, X,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
+import { useSidebarContext } from "./sidebar-context";
 
 interface NavItem {
   label: string;
@@ -25,7 +26,7 @@ const navItems: NavItem[] = [
   { label: "Sales", href: "/sales", icon: ShoppingCart, roles: ["salesperson", "supervisor", "admin"] },
   { label: "Inventory", href: "/inventory", icon: Package, roles: ["supervisor", "accountant", "admin"] },
   { label: "Adjustments", href: "/adjustments", icon: Sliders, roles: ["supervisor", "admin"] },
-  { label: "Reconciliation", href: "/reconciliation", icon: Calculator, roles: ["salesperson", "supervisor", "admin"] },
+  { label: "Reconciliation", href: "/reconciliation", icon: Calculator, roles: ["supervisor", "accountant", "admin"] },
   { label: "Stock Audits", href: "/audits", icon: ClipboardList, roles: ["supervisor", "admin"] },
   { label: "Expenses", href: "/expenses", icon: Receipt, roles: ["salesperson", "supervisor", "accountant", "admin"] },
   { label: "Credit", href: "/credit", icon: CreditCard, roles: ["salesperson", "supervisor", "accountant", "admin"] },
@@ -41,6 +42,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { profile } = useProfile();
+  const { close } = useSidebarContext();
 
   async function handleSignOut() {
     const supabase = createClient();
@@ -60,10 +62,18 @@ export function Sidebar() {
           <div className="h-9 w-9 rounded-lg bg-blue-500 flex items-center justify-center flex-shrink-0">
             <Snowflake className="h-5 w-5 text-white" />
           </div>
-          <div>
+          <div className="flex-1">
             <p className="font-bold text-white leading-tight">Cold Store</p>
             <p className="text-xs text-slate-400">Inventory System</p>
           </div>
+          {/* Close button — mobile only */}
+          <button
+            onClick={close}
+            className="lg:hidden p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+            aria-label="Close menu"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
       </div>
 
@@ -75,6 +85,7 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
+              onClick={close}
               className={cn(
                 "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group",
                 isActive

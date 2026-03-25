@@ -229,8 +229,10 @@ export default async function DashboardPage() {
 
         {/* Bottom section — role-specific */}
         {isSalesperson ? (
-          /* Salesperson: full-width today's sales table */
-          <DashboardSalesTable sales={(todaySales ?? []) as never} />
+          /* Salesperson: today's sales table — hidden on mobile (visible on Sales page) */
+          <div className="hidden sm:block">
+            <DashboardSalesTable sales={(todaySales ?? []) as never} />
+          </div>
         ) : (
           /* Manager/Admin/Accountant: chart + low stock */
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
