@@ -157,9 +157,9 @@ export function ReconciliationClient({
     const mobile = parseFloat(form.mobile) || 0;
     const isBulkSession = session.session_key !== "direct";
     const dayTillExpenses = !isBulkSession ? (selectedDay?.cash_expenses ?? 0) : 0;
-    const expectedCash = session.system_cash - dayTillExpenses - savedExpensesTotal - newExpensesTotal;
+    const expectedCash = session.system_cash + session.credit_cash - dayTillExpenses - savedExpensesTotal - newExpensesTotal;
     const cashV = cash - expectedCash;
-    const mobileV = mobile - session.system_mobile;
+    const mobileV = mobile - (session.system_mobile + session.credit_mobile);
     const status = cashV === 0 && mobileV === 0 ? "balanced" : "flagged";
 
     const { data, error } = await supabase
@@ -170,7 +170,7 @@ export function ReconciliationClient({
           submitted_by: profile!.id,
           session_key: session.session_key,
           system_cash_total: expectedCash,
-          system_mobile_total: session.system_mobile,
+          system_mobile_total: session.system_mobile + session.credit_mobile,
           actual_cash_entered: cash,
           actual_mobile_entered: mobile,
           status,
@@ -297,9 +297,10 @@ export function ReconciliationClient({
               const pendingExpensesTotal = pendingList.reduce(
                 (s, e) => s + (parseFloat(e.amount) || 0), 0
               );
-              const expectedCash = session.system_cash - dayTillExpenses - savedExpensesTotal - pendingExpensesTotal;
+              const expectedCash = session.system_cash + session.credit_cash - dayTillExpenses - savedExpensesTotal - pendingExpensesTotal;
+              const expectedMobile = session.system_mobile + session.credit_mobile;
               const cashVariance = (parseFloat(form.cash) || 0) - expectedCash;
-              const mobileVariance = (parseFloat(form.mobile) || 0) - session.system_mobile;
+              const mobileVariance = (parseFloat(form.mobile) || 0) - expectedMobile;
               const isBalanced = cashVariance === 0 && mobileVariance === 0;
               const isSaving = saving[session.session_key] ?? false;
 
@@ -333,6 +334,18 @@ export function ReconciliationClient({
                         <span className="text-slate-500">Cash Sales</span>
                         <span className="font-medium">{formatCurrency(session.system_cash)}</span>
                       </div>
+                      {session.credit_cash > 0 && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-purple-600">+ Credit Repayments</span>
+                          <span className="text-purple-600">{formatCurrency(session.credit_cash)}</span>
+                        </div>
+                      )}
+                      {session.credit_mobile > 0 && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-purple-600">+ Credit Repayments (Mobile)</span>
+                          <span className="text-purple-600">{formatCurrency(session.credit_mobile)}</span>
+                        </div>
+                      )}
                       {dayTillExpenses > 0 && (
                         <div className="flex justify-between text-amber-700">
                           <span>Till Expenses (day)</span>
@@ -359,7 +372,7 @@ export function ReconciliationClient({
                       )}
                       <div className="flex justify-between">
                         <span className="text-slate-500">Mobile Money</span>
-                        <span className="font-medium">{formatCurrency(session.system_mobile)}</span>
+                        <span className="font-medium">{formatCurrency(expectedMobile)}</span>
                       </div>
                     </div>
 

@@ -51,6 +51,11 @@ export default async function SalesPage() {
     .eq("is_active", true)
     .order("name");
 
+  const { data: customers } = await supabase
+    .from("customers")
+    .select("id, full_name, phone")
+    .order("full_name");
+
   let dailySummaries: DailySummary[] = [];
 
   if (!isSalesperson) {
@@ -105,6 +110,7 @@ export default async function SalesPage() {
         initialSales={(todaySales ?? []) as never}
         userRole={role}
         dailySummaries={dailySummaries}
+        customers={(customers ?? []) as never}
       />
     </div>
   );

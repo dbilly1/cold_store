@@ -107,6 +107,12 @@ interface ExistingSale {
   }>;
 }
 
+interface Customer {
+  id: string;
+  full_name: string;
+  phone: string | null;
+}
+
 // ─────────────────────────────────────────────
 // Bulk order row — each row = one separate sale
 // ─────────────────────────────────────────────
@@ -119,6 +125,7 @@ interface BulkRow {
   unit_price: string;
   discount: string;
   payment_method: PaymentMethod;
+  customer_id: string;
 }
 
 const newBulkRow = (): BulkRow => ({
@@ -130,6 +137,7 @@ const newBulkRow = (): BulkRow => ({
   unit_price: "",
   discount: "0",
   payment_method: "cash",
+  customer_id: "",
 });
 
 function bulkLineTotal(row: BulkRow, products: Product[]) {
@@ -180,15 +188,27 @@ export function SalesClient({
   initialSales,
   userRole = "salesperson",
   dailySummaries = [],
+  customers: initialCustomers = [],
 }: {
   products: Product[];
   initialSales: ExistingSale[];
   userRole?: string;
   dailySummaries?: DailySummary[];
+  customers?: Customer[];
 }) {
   const { toast } = useToast();
   const { profile } = useProfile();
   const [sales, setSales] = useState<ExistingSale[]>(initialSales);
+  const [customers, setCustomers] = useState<Customer[]>(initialCustomers);
+  const [creditCustomerId, setCreditCustomerId] = useState("");
+  // Quick-add customer dialog
+  const [newCustomerDialog, setNewCustomerDialog] = useState<{
+    open: boolean;
+    name: string;
+    phone: string;
+    source: "single" | string; // "single" or a bulk row id
+  }>({ open: false, name: "", phone: "", source: "single" });
+  const [customerSaving, setCustomerSaving] = useState(false);
 
   // Single sale state
   const [items, setItems] = useState<SaleItem[]>([]);
@@ -304,6 +324,7 @@ export function SalesClient({
         payment_method: paymentMethod,
         notes: notes || null,
         is_deleted: false,
+        customer_id: paymentMethod === "credit" ? (creditCustomerId || null) : null,
       })
       .select()
       .single();
@@ -357,6 +378,7 @@ export function SalesClient({
     setItems([]);
     setSaleDiscount(0);
     setNotes("");
+    setCreditCustomerId("");
     const fresh = await refreshSales(supabase, today);
     if (fresh) setSales(fresh as unknown as ExistingSale[]);
     setSaving(false);
@@ -370,6 +392,39 @@ export function SalesClient({
 
   const removeBulkRow = (id: string) =>
     setBulkRows((rows) => rows.filter((r) => r.id !== id));
+
+  const handleAddCustomer = async () => {
+    if (!newCustomerDialog.name.trim()) {
+      toast({ title: "Name is required", variant: "destructive" });
+      return;
+    }
+    setCustomerSaving(true);
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("customers")
+      .insert({
+        full_name: newCustomerDialog.name.trim(),
+        phone: newCustomerDialog.phone.trim() || null,
+        created_by: profile!.id,
+      })
+      .select("id, full_name, phone")
+      .single();
+    if (error || !data) {
+      toast({ title: "Failed to add customer", description: error?.message, variant: "destructive" });
+      setCustomerSaving(false);
+      return;
+    }
+    const newCust = data as Customer;
+    setCustomers((prev) => [...prev, newCust].sort((a, b) => a.full_name.localeCompare(b.full_name)));
+    if (newCustomerDialog.source === "single") {
+      setCreditCustomerId(newCust.id);
+    } else {
+      updateBulkRow(newCustomerDialog.source, { customer_id: newCust.id });
+    }
+    setNewCustomerDialog({ open: false, name: "", phone: "", source: "single" });
+    toast({ title: "Customer added" });
+    setCustomerSaving(false);
+  };
 
   // When product is selected in a bulk row, auto-fill price
   const onBulkProductChange = (rowId: string, productId: string) => {
@@ -388,7 +443,8 @@ export function SalesClient({
   const bulkValidRows = bulkRows.filter(
     (r) =>
       r.product_id &&
-      (parseFloat(r.quantity) > 0 || parseFloat(r.quantity_boxes) > 0),
+      (parseFloat(r.quantity) > 0 || parseFloat(r.quantity_boxes) > 0) &&
+      (r.payment_method !== "credit" || r.customer_id),
   );
 
   const handleBulkSave = async () => {
@@ -427,6 +483,7 @@ export function SalesClient({
           notes: bulkNotes || null,
           is_deleted: false,
           batch_id: batchId,
+          customer_id: row.payment_method === "credit" ? (row.customer_id || null) : null,
         })
         .select()
         .single();
@@ -915,7 +972,7 @@ export function SalesClient({
           <div className="space-y-2">
             <Label className="text-xs">Payment Method</Label>
             <div className="flex gap-2">
-              {(["cash", "mobile_money"] as PaymentMethod[]).map((m) => (
+              {(["cash", "mobile_money", "credit"] as PaymentMethod[]).map((m) => (
                 <button
                   key={m}
                   onClick={() => setPaymentMethod(m)}
@@ -925,10 +982,34 @@ export function SalesClient({
                       : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
                   }`}
                 >
-                  {m === "cash" ? "Cash" : "Mobile Money"}
+                  {m === "cash" ? "Cash" : m === "mobile_money" ? "Mobile Money" : "Credit"}
                 </button>
               ))}
             </div>
+            {paymentMethod === "credit" && (
+              <div className="flex gap-2 mt-1">
+                <Select value={creditCustomerId} onValueChange={setCreditCustomerId}>
+                  <SelectTrigger className="flex-1 text-sm">
+                    <SelectValue placeholder="Select customer..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {customers.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.full_name}{c.phone ? ` · ${c.phone}` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  title="New customer"
+                  onClick={() => setNewCustomerDialog({ open: true, name: "", phone: "", source: "single" })}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
           </div>
           <Input
             placeholder="Notes (optional)"
@@ -992,7 +1073,9 @@ export function SalesClient({
                             >
                               {sale.payment_method === "cash"
                                 ? "Cash"
-                                : "Mobile Money"}
+                                : sale.payment_method === "mobile_money"
+                                ? "Mobile Money"
+                                : "Credit"}
                             </Badge>
                           </div>
                           <p className="text-xs text-muted-foreground">
@@ -1284,7 +1367,7 @@ export function SalesClient({
                         <td className="px-4 py-3 text-right font-semibold">{formatCurrency(sale.total_amount)}</td>
                         <td className="px-4 py-3 text-center">
                           <Badge variant={sale.payment_method === "cash" ? "secondary" : "outline"} className="text-xs">
-                            {sale.payment_method === "cash" ? "Cash" : "MoMo"}
+                            {sale.payment_method === "cash" ? "Cash" : sale.payment_method === "mobile_money" ? "MoMo" : "Credit"}
                           </Badge>
                         </td>
                         <td className="px-4 py-3 text-xs text-slate-500">
@@ -1572,7 +1655,7 @@ export function SalesClient({
                       {/* Payment method */}
                       <td className="px-2 py-2 align-middle">
                         <div className="flex rounded-md overflow-hidden border">
-                          {(["cash", "mobile_money"] as PaymentMethod[]).map(
+                          {(["cash", "mobile_money", "credit"] as PaymentMethod[]).map(
                             (m) => (
                               <button
                                 key={m}
@@ -1586,11 +1669,39 @@ export function SalesClient({
                                     : "bg-white text-slate-500 hover:bg-slate-50"
                                 }`}
                               >
-                                {m === "cash" ? "Cash" : "Mobile"}
+                                {m === "cash" ? "Cash" : m === "mobile_money" ? "Mobile" : "Credit"}
                               </button>
                             ),
                           )}
                         </div>
+                        {row.payment_method === "credit" && (
+                          <div className="flex gap-1 mt-1">
+                            <Select
+                              value={row.customer_id}
+                              onValueChange={(v) => updateBulkRow(row.id, { customer_id: v })}
+                            >
+                              <SelectTrigger className="h-7 text-xs">
+                                <SelectValue placeholder="Customer..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {customers.map((c) => (
+                                  <SelectItem key={c.id} value={c.id} className="text-xs">
+                                    {c.full_name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7"
+                              title="New customer"
+                              onClick={() => setNewCustomerDialog({ open: true, name: "", phone: "", source: row.id })}
+                            >
+                              <Plus className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        )}
                       </td>
 
                       {/* Line total */}
@@ -1981,6 +2092,44 @@ export function SalesClient({
             </Button>
             <Button variant="destructive" onClick={handleDelete}>
               Delete Sale
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* New Customer Dialog */}
+      <Dialog
+        open={newCustomerDialog.open}
+        onOpenChange={(o) => setNewCustomerDialog((p) => ({ ...p, open: o }))}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Customer</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Full Name *</Label>
+              <Input
+                value={newCustomerDialog.name}
+                onChange={(e) => setNewCustomerDialog((p) => ({ ...p, name: e.target.value }))}
+                placeholder="Customer name"
+              />
+            </div>
+            <div>
+              <Label>Phone Number</Label>
+              <Input
+                value={newCustomerDialog.phone}
+                onChange={(e) => setNewCustomerDialog((p) => ({ ...p, phone: e.target.value }))}
+                placeholder="0XX XXX XXXX"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewCustomerDialog((p) => ({ ...p, open: false }))}>
+              Cancel
+            </Button>
+            <Button onClick={() => handleAddCustomer()} disabled={customerSaving}>
+              {customerSaving ? "Saving..." : "Add Customer"}
             </Button>
           </DialogFooter>
         </DialogContent>

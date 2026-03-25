@@ -16,6 +16,8 @@ export interface SessionData {
   session_time: string;  // earliest created_at in the group
   system_cash: number;
   system_mobile: number;
+  credit_cash: number;   // cash repayments received (direct session only)
+  credit_mobile: number; // mobile repayments received (direct session only)
   session_expenses: SessionExpense[]; // saved till expenses for this session (bulk only)
 }
 
@@ -47,6 +49,14 @@ export default async function ReconciliationPage() {
     batch_id: string | null;
   };
 
+  type CreditPaymentRow = {
+    customer_id: string;
+    amount: number;
+    payment_method: string;
+    payment_date: string;
+    created_at: string;
+  };
+
   // Sales — need batch_id and created_at for session grouping
   const { data: allSalesRaw } = await supabase
     .from("sales")
@@ -63,15 +73,22 @@ export default async function ReconciliationPage() {
     .gte("expense_date", thirtyDaysAgo);
   const tillExpenses = (tillExpensesRaw ?? []) as unknown as ExpenseRow[];
 
+  const { data: creditPaymentsRaw } = await supabase
+    .from("credit_payments")
+    .select("customer_id, amount, payment_method, payment_date, created_at")
+    .gte("payment_date", thirtyDaysAgo);
+  const creditPayments = (creditPaymentsRaw ?? []) as unknown as CreditPaymentRow[];
+
   // Group by (sale_date, session_key)
-  type SessionAccum = { cash: number; mobile: number; time: string };
+  type SessionAccum = { cash: number; mobile: number; time: string; credit_cash: number; credit_mobile: number };
   const byDateSession = new Map<string, Map<string, SessionAccum>>();
 
   allSales.forEach((s) => {
+    if (s.payment_method === "credit") return; // credit sales not collected yet
     const sessionKey = s.batch_id ?? "direct";
     if (!byDateSession.has(s.sale_date)) byDateSession.set(s.sale_date, new Map());
     const dateMap = byDateSession.get(s.sale_date)!;
-    const ex = dateMap.get(sessionKey) ?? { cash: 0, mobile: 0, time: s.created_at };
+    const ex = dateMap.get(sessionKey) ?? { cash: 0, mobile: 0, time: s.created_at, credit_cash: 0, credit_mobile: 0 };
     ex.cash += s.payment_method === "cash" ? s.total_amount : 0;
     ex.mobile += s.payment_method === "mobile_money" ? s.total_amount : 0;
     if (s.created_at < ex.time) ex.time = s.created_at; // keep earliest
@@ -97,6 +114,17 @@ export default async function ReconciliationPage() {
     }
   });
 
+  // Credit repayments go into the "direct" session for their payment_date
+  creditPayments.forEach((p) => {
+    if (!byDateSession.has(p.payment_date)) byDateSession.set(p.payment_date, new Map());
+    const dateMap = byDateSession.get(p.payment_date)!;
+    const ex = dateMap.get("direct") ?? { cash: 0, mobile: 0, time: p.created_at, credit_cash: 0, credit_mobile: 0 };
+    if (p.payment_method === "cash") ex.credit_cash += p.amount;
+    else if (p.payment_method === "mobile_money") ex.credit_mobile += p.amount;
+    if (p.created_at < ex.time) ex.time = p.created_at;
+    dateMap.set("direct", ex);
+  });
+
   const days: DaySessionData[] = Array.from(byDateSession.entries())
     .sort(([a], [b]) => b.localeCompare(a))
     .map(([date, sessionMap]) => {
@@ -108,6 +136,8 @@ export default async function ReconciliationPage() {
           session_time: v.time,
           system_cash: v.cash,
           system_mobile: v.mobile,
+          credit_cash: v.credit_cash,
+          credit_mobile: v.credit_mobile,
           // Bulk sessions carry their own expenses; direct sessions use cash_expenses
           session_expenses: session_key !== "direct"
             ? (expensesByBatch.get(session_key) ?? [])

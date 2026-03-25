@@ -9,7 +9,7 @@ import { getRoleLabel, getRoleBadgeColor } from "@/lib/utils";
 import {
   LayoutDashboard, ShoppingCart, Package, Sliders, ClipboardList,
   Calculator, Receipt, BarChart3, Bell, ScrollText, Settings,
-  LogOut, Snowflake, Users, ChevronRight,
+  LogOut, Snowflake, Users, ChevronRight, CreditCard,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
 
@@ -28,6 +28,7 @@ const navItems: NavItem[] = [
   { label: "Reconciliation", href: "/reconciliation", icon: Calculator, roles: ["salesperson", "supervisor", "admin"] },
   { label: "Stock Audits", href: "/audits", icon: ClipboardList, roles: ["supervisor", "admin"] },
   { label: "Expenses", href: "/expenses", icon: Receipt, roles: ["salesperson", "supervisor", "accountant", "admin"] },
+  { label: "Credit", href: "/credit", icon: CreditCard, roles: ["salesperson", "supervisor", "accountant", "admin"] },
   { label: "Reports", href: "/reports", icon: BarChart3, roles: ["supervisor", "accountant", "admin"] },
   { label: "Alerts", href: "/alerts", icon: Bell, roles: ["supervisor", "admin"] },
   { label: "Audit Log", href: "/audit-log", icon: ScrollText, roles: ["admin"] },

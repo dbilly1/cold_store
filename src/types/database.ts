@@ -1,6 +1,6 @@
 export type UserRole = "salesperson" | "supervisor" | "accountant" | "admin";
 export type UnitType = "kg" | "units" | "boxes";
-export type PaymentMethod = "cash" | "mobile_money";
+export type PaymentMethod = "cash" | "mobile_money" | "credit";
 export type AdjustmentReason =
   | "melt_loss"
   | "spoilage"
@@ -188,6 +188,26 @@ export interface ExpenseRow {
   created_at: string;
 }
 
+export interface CustomerRow {
+  id: string;
+  full_name: string;
+  phone: string | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface CreditPaymentRow {
+  id: string;
+  customer_id: string;
+  amount: number;
+  payment_method: "cash" | "mobile_money";
+  payment_date: string;
+  recorded_by: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
 export interface AlertRow {
   id: string;
   alert_type: AlertType;
@@ -300,6 +320,18 @@ export interface Database {
         Row: ExpenseRow;
         Insert: Omit<ExpenseRow, "id" | "created_at">;
         Update: Partial<Omit<ExpenseRow, "id" | "created_at">>;
+        Relationships: [];
+      };
+      customers: {
+        Row: CustomerRow;
+        Insert: Omit<CustomerRow, "id" | "created_at">;
+        Update: Partial<Omit<CustomerRow, "id" | "created_at">>;
+        Relationships: [];
+      };
+      credit_payments: {
+        Row: CreditPaymentRow;
+        Insert: Omit<CreditPaymentRow, "id" | "created_at">;
+        Update: Partial<Omit<CreditPaymentRow, "id" | "created_at">>;
         Relationships: [];
       };
       alerts: {
