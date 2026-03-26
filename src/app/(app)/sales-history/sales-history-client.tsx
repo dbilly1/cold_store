@@ -64,7 +64,7 @@ function fmtQty(qty: number, unitType: string): string {
 
 // ── Component ──────────────────────────────────────────────────
 
-export function SalesHistoryClient() {
+export function SalesHistoryClient({ embedded = false }: { embedded?: boolean }) {
   const today = format(new Date(), "yyyy-MM-dd");
 
   const [dateFrom, setDateFrom] = useState(today);
@@ -322,10 +322,8 @@ export function SalesHistoryClient() {
     : "0";
 
   // ── Render ─────────────────────────────────────────────────
-  return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <TopBar title="Sales History" />
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+  const innerContent = (
+    <div className="flex-1 overflow-y-auto p-6 space-y-4">
 
         {/* ── Controls ── */}
         <div className="flex flex-wrap gap-2 items-center justify-between">
@@ -622,7 +620,15 @@ export function SalesHistoryClient() {
           </Card>
         )}
 
-      </div>
+    </div>
+  );
+
+  if (embedded) return innerContent;
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <TopBar title="Sales History" />
+      {innerContent}
     </div>
   );
 }

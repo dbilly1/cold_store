@@ -1,7 +1,5 @@
-import { SalesHistoryClient } from "./sales-history-client";
-
-export const dynamic = "force-dynamic";
+import { redirect } from "next/navigation";
 
 export default function SalesHistoryPage() {
-  return <SalesHistoryClient />;
+  redirect("/history");
 }
