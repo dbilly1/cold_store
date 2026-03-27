@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/layout/top-bar";
 import { AuditsClient } from "./audits-client";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 300; // refresh every 5 minutes
 
 export default async function AuditsPage() {
   const supabase = await createClient();

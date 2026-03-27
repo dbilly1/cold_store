@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/layout/top-bar";
 import { ReportsClient } from "./reports-client";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 300; // refresh every 5 minutes
 import { format, subDays } from "date-fns";
 
 export default async function ReportsPage() {

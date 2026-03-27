@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/layout/top-bar";
 import { AlertsClient } from "./alerts-client";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 60; // refresh every 60 seconds
 
 export default async function AlertsPage() {
   const supabase = await createClient();

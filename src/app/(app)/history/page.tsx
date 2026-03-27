@@ -1,6 +1,6 @@
 import { HistoryClient } from "./history-client";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 300; // refresh every 5 minutes
 
 export default function HistoryPage() {
   return <HistoryClient />;

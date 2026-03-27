@@ -3,7 +3,7 @@ import { TopBar } from "@/components/layout/top-bar";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/utils";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 300; // refresh every 5 minutes
 
 export default async function AuditLogPage() {
   const supabase = await createClient();
