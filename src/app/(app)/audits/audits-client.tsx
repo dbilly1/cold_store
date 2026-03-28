@@ -42,21 +42,25 @@ type Counts = Record<string, { primary: string; boxes: string }>;
 // ---------- helpers ----------
 function systemDisplay(item: AuditItem) {
   const ut = item.product?.unit_type;
-  if (ut === "kg") return `${Number(item.system_stock_kg).toFixed(3)} kg` + (item.system_stock_boxes > 0 ? ` + ${item.system_stock_boxes} boxes` : "");
-  if (ut === "units") return `${item.system_stock_units} units` + (item.system_stock_boxes > 0 ? ` + ${item.system_stock_boxes} boxes` : "");
+  // current_stock_kg / current_stock_units already include boxes converted —
+  // don't add boxes again or it appears double-counted
+  if (ut === "kg")    return `${Number(item.system_stock_kg).toFixed(3)} kg`;
+  if (ut === "units") return `${item.system_stock_units} units`;
   return `${item.system_stock_boxes} boxes`;
 }
 
 function liveVariance(item: AuditItem, counts: Counts) {
   const c = counts[item.product_id] ?? { primary: "", boxes: "" };
   const physPrimary = parseFloat(c.primary) || 0;
-  const physBoxes = parseFloat(c.boxes) || 0;
+  const physBoxes  = parseFloat(c.boxes)   || 0;
   const ut = item.product?.unit_type;
+  const unitsPerBox = item.product?.units_per_box ?? 0;
   const sysPrimary = ut === "kg" ? item.system_stock_kg : ut === "units" ? item.system_stock_units : item.system_stock_boxes;
-  const effectivePhys = ut === "boxes" ? physBoxes : physPrimary;
+  // For kg/units: add boxes × units_per_box to the direct primary count
+  const effectivePhys = ut === "boxes" ? physBoxes : physPrimary + physBoxes * unitsPerBox;
   const diff = effectivePhys - sysPrimary;
   const pct = sysPrimary > 0 ? Math.abs(diff / sysPrimary) * 100 : 0;
-  return { diff, pct };
+  return { diff, pct, effectivePhys };
 }
 
 export function AuditsClient({ products, audits: initial }: { products: Product[]; audits: Audit[] }) {
@@ -144,15 +148,17 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
       const p = products.find((prod) => prod.id === item.product_id);
       const counts = physicalCounts[item.product_id] ?? { primary: "0", boxes: "0" };
       const physPrimary = parseFloat(counts.primary) || 0;
-      const physBoxes = parseFloat(counts.boxes) || 0;
-      const isKg = p?.unit_type === "kg";
+      const physBoxes   = parseFloat(counts.boxes)   || 0;
+      const isKg    = p?.unit_type === "kg";
       const isBoxes = p?.unit_type === "boxes";
+      const unitsPerBox = p?.units_per_box ?? 0;
 
-      const physKg = isKg ? physPrimary : 0;
-      const physUnits = (!isKg && !isBoxes) ? physPrimary : 0;
+      // For kg/units: total physical = direct entry + boxes converted to primary unit
+      const effectivePhys = isBoxes ? physBoxes : physPrimary + physBoxes * unitsPerBox;
+      const physKg    = isKg    ? effectivePhys : 0;
+      const physUnits = (!isKg && !isBoxes) ? effectivePhys : 0;
 
       const sysPrimary = isKg ? item.system_stock_kg : isBoxes ? item.system_stock_boxes : item.system_stock_units;
-      const effectivePhys = isBoxes ? physBoxes : physPrimary;
       const diff = Math.abs(effectivePhys - sysPrimary);
       const variancePct = sysPrimary > 0 ? (diff / sysPrimary) * 100 : 0;
       const withinThreshold = variancePct <= (p?.variance_threshold_pct ?? 5);
@@ -314,30 +320,38 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                           </div>
                         )}
 
-                        {/* Boxes — always shown */}
-                        <div className="flex items-center gap-1.5">
-                          <Input
-                            type="number" min="0" step="0.01"
-                            className="w-24 h-8 text-sm"
-                            placeholder="0"
-                            value={p?.unit_type === "boxes" ? counts.primary : counts.boxes}
-                            onChange={(e) => {
-                              if (p?.unit_type === "boxes") {
-                                setPhysicalCounts({ ...physicalCounts, [item.product_id]: { ...counts, primary: e.target.value } });
-                              } else {
-                                setPhysicalCounts({ ...physicalCounts, [item.product_id]: { ...counts, boxes: e.target.value } });
-                              }
-                            }}
-                          />
-                          <Label className="text-xs text-slate-500">boxes</Label>
-                        </div>
-
-                        {/* Conversion hint */}
-                        {p?.units_per_box && parseFloat(counts.boxes) > 0 && p?.unit_type !== "boxes" && (
-                          <span className="text-xs text-slate-400 whitespace-nowrap">
-                            = {(parseFloat(counts.boxes) * (p.units_per_box ?? 0)).toFixed(p.unit_type === "kg" ? 3 : 0)} {unitLabel} from boxes
-                          </span>
-                        )}
+                        {/* Boxes input — for "boxes" type it IS the primary count;
+                            for kg/units it's an optional conversion helper */}
+                        {p?.unit_type === "boxes" ? (
+                          <div className="flex items-center gap-1.5">
+                            <Input
+                              type="number" min="0" step="1"
+                              className="w-24 h-8 text-sm"
+                              placeholder="0"
+                              value={counts.primary}
+                              onChange={(e) => setPhysicalCounts({ ...physicalCounts, [item.product_id]: { ...counts, primary: e.target.value } })}
+                            />
+                            <Label className="text-xs text-slate-500">boxes</Label>
+                          </div>
+                        ) : p?.units_per_box ? (
+                          <div className="flex items-center gap-1.5">
+                            <Input
+                              type="number" min="0" step="1"
+                              className="w-20 h-8 text-sm"
+                              placeholder="0"
+                              value={counts.boxes}
+                              onChange={(e) => setPhysicalCounts({ ...physicalCounts, [item.product_id]: { ...counts, boxes: e.target.value } })}
+                            />
+                            <Label className="text-xs text-slate-400 whitespace-nowrap">
+                              boxes
+                              {parseFloat(counts.boxes) > 0 && (
+                                <span className="ml-1 text-blue-500">
+                                  (+{(parseFloat(counts.boxes) * p.units_per_box).toFixed(p.unit_type === "kg" ? 3 : 0)} {unitLabel})
+                                </span>
+                              )}
+                            </Label>
+                          </div>
+                        ) : null}
                       </div>
                     </td>
 
