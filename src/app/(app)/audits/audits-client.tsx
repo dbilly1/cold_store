@@ -154,17 +154,24 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
       within_threshold: true,
     }));
 
-    await supabase.from("stock_audit_items").insert(items);
+    const { data: insertedItems } = await supabase
+      .from("stock_audit_items")
+      .insert(items)
+      .select("id, product_id");
 
     const counts: Counts = {};
     auditProducts.forEach((p) => { counts[p.id] = { primary: "", boxes: "" }; });
     setPhysicalCounts(counts);
 
+    // Use real DB ids so completeAudit can update them
+    const itemIdMap = Object.fromEntries((insertedItems ?? []).map(r => [r.product_id, r.id]));
+
     const newAudit: Audit = {
       ...audit,
       conducted_by_profile: { full_name: profile!.full_name },
       items: items.map((item, i) => ({
-        ...item, id: "temp_" + i,
+        ...item,
+        id: itemIdMap[item.product_id] ?? "temp_" + i,
         variance_kg: 0, variance_units: 0, variance_pct: 0, within_threshold: true, notes: null,
         product: {
           name: auditProducts[i].name,
