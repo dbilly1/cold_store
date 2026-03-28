@@ -580,10 +580,17 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                           const isBoxes = p?.unit_type === "boxes";
                           const system   = isBoxes ? item.system_stock_boxes   : isKg ? item.system_stock_kg   : item.system_stock_units;
                           const physical = isBoxes ? item.physical_stock_boxes : isKg ? item.physical_stock_kg : item.physical_stock_units;
-                          const variance = isBoxes ? (item.physical_stock_boxes - item.system_stock_boxes) : isKg ? item.variance_kg : item.variance_units;
+                          // Always derive variance from saved physical − system (variance_kg/units are never persisted)
+                          const variance = physical - system;
                           const unit     = isKg ? " kg" : isBoxes ? " box" : " u";
-                          // severity for history rows (always "counted" = true)
-                          const hsev = getItemSeverity(item.variance_pct, 5, true);
+                          // Use the stored within_threshold + variance_pct for severity (respects per-product threshold)
+                          const hsev: ItemSeverity = item.variance_pct === 0
+                            ? "matched"
+                            : item.within_threshold
+                            ? "ok"
+                            : item.variance_pct <= 15
+                            ? "amber"
+                            : "red";
                           const hcfg = SEVERITY_CONFIG[hsev];
                           return (
                             <tr key={item.id} className={hcfg.rowBg}>
