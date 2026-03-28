@@ -167,7 +167,7 @@ async function refreshSales(
     .select(
       `
       id, sale_date, total_amount, discount_amount, payment_method,
-      is_deleted, delete_reason, created_at, customer_id,
+      is_deleted, delete_reason, created_at, batch_id, customer_id,
       recorded_by_profile:profiles!sales_recorded_by_fkey(full_name),
       items:sale_items(
         id, product_id, quantity_kg, quantity_units, quantity_boxes,
@@ -177,6 +177,7 @@ async function refreshSales(
     `,
     )
     .eq("sale_date", date)
+    .eq("is_deleted", false)
     .order("created_at", { ascending: false });
   return data;
 }
@@ -262,11 +263,12 @@ export function SalesClient({
     open: boolean;
     saleId: string;
     sale_date: string;
+    original_sale_date: string;
     paymentMethod: PaymentMethod;
     customer_id: string;
     notes: string;
     items: EditItem[];
-  }>({ open: false, saleId: "", sale_date: "", paymentMethod: "cash", customer_id: "", notes: "", items: [] });
+  }>({ open: false, saleId: "", sale_date: "", original_sale_date: "", paymentMethod: "cash", customer_id: "", notes: "", items: [] });
   const [editSaving, setEditSaving] = useState(false);
 
   const today = new Date().toISOString().split("T")[0];
@@ -676,6 +678,7 @@ export function SalesClient({
       open: true,
       saleId: sale.id,
       sale_date: sale.sale_date,
+      original_sale_date: sale.sale_date,
       paymentMethod: sale.payment_method as PaymentMethod,
       customer_id: sale.customer_id ?? "",
       notes: "",
@@ -750,10 +753,19 @@ export function SalesClient({
 
     // Refresh the relevant list
     const refreshDate = editDialog.sale_date;
+    const originalDate = editDialog.original_sale_date;
     const fresh = await refreshSales(supabase, refreshDate);
     if (fresh) {
       if (refreshDate === today) setSales(fresh as unknown as ExistingSale[]);
       else setDayDetails(fresh as unknown as ExistingSale[]);
+    }
+    // If the date was changed, also refresh the original date's list
+    if (originalDate && originalDate !== refreshDate) {
+      const originalFresh = await refreshSales(supabase, originalDate);
+      if (originalFresh) {
+        if (originalDate === today) setSales(originalFresh as unknown as ExistingSale[]);
+        else setDayDetails(originalFresh as unknown as ExistingSale[]);
+      }
     }
 
     toast({ title: "Sale updated" });
