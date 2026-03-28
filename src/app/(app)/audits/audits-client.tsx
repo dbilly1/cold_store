@@ -98,8 +98,9 @@ function liveVariance(item: AuditItem, counts: Counts) {
   const ut = item.product?.unit_type;
   const unitsPerBox = item.product?.units_per_box ?? 0;
   const sysPrimary = ut === "kg" ? item.system_stock_kg : ut === "units" ? item.system_stock_units : item.system_stock_boxes;
-  // For kg/units: add boxes × units_per_box to the direct primary count
-  const effectivePhys = ut === "boxes" ? physBoxes : physPrimary + physBoxes * unitsPerBox;
+  // boxes type: count is stored in counts.primary (not counts.boxes)
+  // kg/units: primary + boxes×unitsPerBox
+  const effectivePhys = ut === "boxes" ? physPrimary : physPrimary + physBoxes * unitsPerBox;
   const diff = effectivePhys - sysPrimary;
   const pct = sysPrimary > 0 ? Math.abs(diff / sysPrimary) * 100 : 0;
   return { diff, pct, effectivePhys };
@@ -202,8 +203,9 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
       const isBoxes = p?.unit_type === "boxes";
       const unitsPerBox = p?.units_per_box ?? 0;
 
-      // For kg/units: total physical = direct entry + boxes converted to primary unit
-      const effectivePhys = isBoxes ? physBoxes : physPrimary + physBoxes * unitsPerBox;
+      // boxes type: count is in physPrimary (that's what the input writes to)
+      // kg/units: primary + boxes×unitsPerBox
+      const effectivePhys = isBoxes ? physPrimary : physPrimary + physBoxes * unitsPerBox;
       const physKg    = isKg    ? effectivePhys : 0;
       const physUnits = (!isKg && !isBoxes) ? effectivePhys : 0;
 
@@ -216,7 +218,7 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
         id: item.id,
         physical_stock_kg: physKg,
         physical_stock_units: physUnits,
-        physical_stock_boxes: physBoxes,
+        physical_stock_boxes: isBoxes ? physPrimary : physBoxes,
         variance_pct: variancePct,
         within_threshold: withinThreshold,
       };
