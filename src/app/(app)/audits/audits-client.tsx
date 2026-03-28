@@ -39,7 +39,49 @@ interface Audit {
 
 type Counts = Record<string, { primary: string; boxes: string }>;
 
-// ---------- helpers ----------
+// ---------- status helpers ----------
+
+type ItemSeverity = "pending" | "matched" | "ok" | "amber" | "red";
+
+function getItemSeverity(pct: number, threshold: number, hasCount: boolean): ItemSeverity {
+  if (!hasCount)          return "pending";
+  if (pct === 0)          return "matched";
+  if (pct <= threshold)   return "ok";
+  if (pct <= 15)          return "amber";
+  return "red";
+}
+
+const SEVERITY_CONFIG: Record<ItemSeverity, {
+  label: string; rowBg: string;
+  badgeBg: string; badgeText: string;
+  icon: string;
+}> = {
+  pending:  { label: "—",                rowBg: "",              badgeBg: "",                   badgeText: "text-slate-300",  icon: "" },
+  matched:  { label: "Matched",          rowBg: "bg-green-50/50",badgeBg: "bg-green-100",        badgeText: "text-green-700",  icon: "✓" },
+  ok:       { label: "Within Threshold", rowBg: "bg-green-50/30",badgeBg: "bg-blue-100",         badgeText: "text-blue-700",   icon: "✓" },
+  amber:    { label: "Flagged",          rowBg: "bg-amber-50",   badgeBg: "bg-amber-100",        badgeText: "text-amber-700",  icon: "⚠" },
+  red:      { label: "Flagged",          rowBg: "bg-red-50",     badgeBg: "bg-red-100",          badgeText: "text-red-700",    icon: "⚠" },
+};
+
+// history-card summary pill
+function auditSummaryPill(items: AuditItem[]) {
+  const flagged = items.filter(i => !i.within_threshold).length;
+  const ok      = items.length - flagged;
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+        ✓ {ok} OK
+      </span>
+      {flagged > 0 && (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+          ⚠ {flagged} Flagged
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ---------- other helpers ----------
 function systemDisplay(item: AuditItem) {
   const ut = item.product?.unit_type;
   // current_stock_kg / current_stock_units already include boxes converted —
@@ -224,11 +266,25 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
 
   // ── Active audit count-entry view (full page) ──
   if (activeAudit) {
-    const outOfThreshold = activeAudit.items.filter((item) => {
+    const total   = activeAudit.items.length;
+    const counted = activeAudit.items.filter((item) => {
+      const c = physicalCounts[item.product_id];
+      return c?.primary !== "" || c?.boxes !== "";
+    }).length;
+    const allDone = counted === total;
+
+    const flaggedAmber = activeAudit.items.filter((item) => {
       const { pct } = liveVariance(item, physicalCounts);
-      const p = products.find((prod) => prod.id === item.product_id);
-      return pct > (p?.variance_threshold_pct ?? 5) && physicalCounts[item.product_id]?.primary !== "";
-    });
+      const threshold = products.find(p => p.id === item.product_id)?.variance_threshold_pct ?? 5;
+      const sev = getItemSeverity(pct, threshold, physicalCounts[item.product_id]?.primary !== "" || physicalCounts[item.product_id]?.boxes !== "");
+      return sev === "amber";
+    }).length;
+    const flaggedRed = activeAudit.items.filter((item) => {
+      const { pct } = liveVariance(item, physicalCounts);
+      const threshold = products.find(p => p.id === item.product_id)?.variance_threshold_pct ?? 5;
+      const sev = getItemSeverity(pct, threshold, physicalCounts[item.product_id]?.primary !== "" || physicalCounts[item.product_id]?.boxes !== "");
+      return sev === "red";
+    }).length;
 
     return (
       <div className="flex-1 overflow-y-auto p-6">
@@ -254,12 +310,39 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
         </div>
 
         {/* Summary bar */}
-        <div className="flex items-center gap-4 mb-5 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
-          <span className="text-blue-700 font-medium">{activeAudit.items.length} products to count</span>
-          {outOfThreshold.length > 0 && (
-            <span className="flex items-center gap-1 text-amber-700">
-              <AlertTriangle className="h-4 w-4" />
-              {outOfThreshold.length} outside variance threshold
+        <div className={`flex flex-wrap items-center gap-3 mb-5 p-3 rounded-lg border text-sm ${
+          flaggedRed > 0 ? "bg-red-50 border-red-200" :
+          flaggedAmber > 0 ? "bg-amber-50 border-amber-200" :
+          allDone ? "bg-green-50 border-green-200" : "bg-blue-50 border-blue-200"
+        }`}>
+          {/* Progress */}
+          <span className={`font-medium ${allDone ? "text-green-700" : "text-blue-700"}`}>
+            {counted} / {total} counted
+          </span>
+          {/* Progress bar */}
+          <div className="flex-1 min-w-24 h-1.5 bg-white/70 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${allDone && flaggedRed === 0 && flaggedAmber === 0 ? "bg-green-500" : "bg-blue-500"}`}
+              style={{ width: `${total > 0 ? (counted / total) * 100 : 0}%` }}
+            />
+          </div>
+          {/* Flags */}
+          {flaggedRed > 0 && (
+            <span className="flex items-center gap-1 text-red-700 font-medium">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {flaggedRed} high variance
+            </span>
+          )}
+          {flaggedAmber > 0 && (
+            <span className="flex items-center gap-1 text-amber-700 font-medium">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {flaggedAmber} moderate variance
+            </span>
+          )}
+          {allDone && flaggedRed === 0 && flaggedAmber === 0 && (
+            <span className="flex items-center gap-1 text-green-700 font-medium">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              All within threshold
             </span>
           )}
         </div>
@@ -283,11 +366,13 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                 const counts = physicalCounts[item.product_id] ?? { primary: "", boxes: "" };
                 const { diff, pct } = liveVariance(item, physicalCounts);
                 const hasCount = counts.primary !== "" || counts.boxes !== "";
-                const isOver = pct > (prod?.variance_threshold_pct ?? 5);
+                const threshold = prod?.variance_threshold_pct ?? 5;
+                const severity = getItemSeverity(pct, threshold, hasCount);
+                const cfg = SEVERITY_CONFIG[severity];
                 const unitLabel = p?.unit_type === "kg" ? "kg" : p?.unit_type === "units" ? "units" : "boxes";
 
                 return (
-                  <tr key={item.product_id} className={hasCount && isOver ? "bg-red-50" : hasCount ? "bg-green-50/40" : ""}>
+                  <tr key={item.product_id} className={cfg.rowBg}>
                     {/* Product name */}
                     <td className="p-3">
                       <p className="font-medium">{p?.name}</p>
@@ -369,17 +454,12 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
 
                     {/* Status indicator */}
                     <td className="p-3 text-center">
-                      {!hasCount ? (
-                        <span className="text-xs text-slate-300">pending</span>
-                      ) : isOver ? (
-                        <span className="flex items-center justify-center gap-1 text-red-600">
-                          <AlertTriangle className="h-3.5 w-3.5" />
-                          <span className="text-xs">Over</span>
-                        </span>
+                      {severity === "pending" ? (
+                        <span className="text-xs text-slate-300">—</span>
                       ) : (
-                        <span className="flex items-center justify-center gap-1 text-green-600">
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                          <span className="text-xs">OK</span>
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cfg.badgeBg} ${cfg.badgeText}`}>
+                          {cfg.icon && <span>{cfg.icon}</span>}
+                          {cfg.label}
                         </span>
                       )}
                     </td>
@@ -468,7 +548,7 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
               <Card key={audit.id}>
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between mb-3">
-                    <div>
+                    <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <p className="font-medium">{formatDate(audit.audit_date)}</p>
                         <Badge variant="outline" className="capitalize text-xs">{audit.audit_type}</Badge>
@@ -477,6 +557,7 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                       <p className="text-xs text-muted-foreground">
                         by {(audit.conducted_by_profile as { full_name: string } | null)?.full_name}
                       </p>
+                      {audit.items?.length > 0 && auditSummaryPill(audit.items)}
                     </div>
                   </div>
 
@@ -495,28 +576,30 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                       <tbody>
                         {audit.items?.map((item) => {
                           const p = item.product as { name: string; unit_type: string } | null;
-                          const isKg = p?.unit_type === "kg";
+                          const isKg    = p?.unit_type === "kg";
                           const isBoxes = p?.unit_type === "boxes";
-                          const system = isBoxes ? item.system_stock_boxes : isKg ? item.system_stock_kg : item.system_stock_units;
+                          const system   = isBoxes ? item.system_stock_boxes   : isKg ? item.system_stock_kg   : item.system_stock_units;
                           const physical = isBoxes ? item.physical_stock_boxes : isKg ? item.physical_stock_kg : item.physical_stock_units;
                           const variance = isBoxes ? (item.physical_stock_boxes - item.system_stock_boxes) : isKg ? item.variance_kg : item.variance_units;
-                          const unit = isKg ? " kg" : isBoxes ? " box" : " u";
+                          const unit     = isKg ? " kg" : isBoxes ? " box" : " u";
+                          // severity for history rows (always "counted" = true)
+                          const hsev = getItemSeverity(item.variance_pct, 5, true);
+                          const hcfg = SEVERITY_CONFIG[hsev];
                           return (
-                            <tr key={item.id} className={!item.within_threshold ? "bg-red-50" : ""}>
+                            <tr key={item.id} className={hcfg.rowBg}>
                               <td className="py-1.5 font-medium">{p?.name}</td>
                               <td className="text-right py-1.5 font-mono">{Number(system).toFixed(isKg ? 3 : 0)}{unit}</td>
                               <td className="text-right py-1.5 font-mono">{Number(physical).toFixed(isKg ? 3 : 0)}{unit}</td>
-                              <td className={`text-right py-1.5 font-mono font-medium ${variance < 0 ? "text-red-600" : variance > 0 ? "text-green-600" : ""}`}>
+                              <td className={`text-right py-1.5 font-mono font-medium ${variance < 0 ? "text-red-600" : variance > 0 ? "text-green-600" : "text-slate-500"}`}>
                                 {variance > 0 ? "+" : ""}{Number(variance).toFixed(isKg ? 3 : 0)}{unit}
                               </td>
-                              <td className={`text-center py-1.5 ${!item.within_threshold ? "text-red-600 font-bold" : "text-slate-500"}`}>
+                              <td className={`text-center py-1.5 font-medium ${hcfg.badgeText}`}>
                                 {item.variance_pct.toFixed(1)}%
                               </td>
                               <td className="text-center py-1.5">
-                                {item.within_threshold
-                                  ? <Badge variant="success" className="text-[10px] px-1 py-0">OK</Badge>
-                                  : <Badge variant="destructive" className="text-[10px] px-1 py-0">Flag</Badge>
-                                }
+                                <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${hcfg.badgeBg} ${hcfg.badgeText}`}>
+                                  {hcfg.icon} {hcfg.label}
+                                </span>
                               </td>
                             </tr>
                           );
