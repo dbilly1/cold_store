@@ -17,7 +17,7 @@ import {
   parseISO,
 } from "date-fns";
 import * as XLSX from "xlsx";
-import { Download, FileSpreadsheet, Loader2 } from "lucide-react";
+import { Download, FileSpreadsheet, Loader2, ChevronDown, ChevronRight } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -33,6 +33,36 @@ interface StockAdditionRow {
   notes: string | null;
   product: { id: string; name: string; unit_type: string } | null;
   added_by_profile: { full_name: string } | null;
+}
+
+interface StockAuditItemRow {
+  id: string;
+  product_id: string;
+  system_stock_kg: number;
+  system_stock_units: number;
+  system_stock_boxes: number;
+  physical_stock_kg: number;
+  physical_stock_units: number;
+  physical_stock_boxes: number;
+  variance_kg: number;
+  variance_units: number;
+  variance_boxes: number;
+  variance_pct: number;
+  within_threshold: boolean;
+  notes: string | null;
+  product: { id: string; name: string; unit_type: string } | null;
+}
+
+interface StockAuditRow {
+  id: string;
+  created_at: string;
+  audit_date: string;
+  audit_type: "full" | "random";
+  status: "draft" | "in_progress" | "completed" | "cancelled";
+  notes: string | null;
+  completed_at: string | null;
+  conducted_by_profile: { full_name: string } | null;
+  items: StockAuditItemRow[];
 }
 
 interface StockAdjustmentRow {
@@ -73,9 +103,32 @@ function deltaLabel(row: StockAdjustmentRow): { text: string; positive: boolean 
 
 function statusBadge(status: string) {
   const base = "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium";
-  if (status === "approved") return <span className={`${base} bg-green-100 text-green-700`}>Approved</span>;
-  if (status === "rejected") return <span className={`${base} bg-red-100 text-red-700`}>Rejected</span>;
-  return <span className={`${base} bg-amber-100 text-amber-700`}>Pending</span>;
+  if (status === "approved")   return <span className={`${base} bg-green-100 text-green-700`}>Approved</span>;
+  if (status === "rejected")   return <span className={`${base} bg-red-100 text-red-700`}>Rejected</span>;
+  if (status === "completed")  return <span className={`${base} bg-green-100 text-green-700`}>Completed</span>;
+  if (status === "cancelled")  return <span className={`${base} bg-red-100 text-red-700`}>Cancelled</span>;
+  if (status === "in_progress") return <span className={`${base} bg-blue-100 text-blue-700`}>In Progress</span>;
+  return <span className={`${base} bg-amber-100 text-amber-700`}>Draft</span>;
+}
+
+function auditTypeBadge(type: string) {
+  const base = "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium";
+  if (type === "full") return <span className={`${base} bg-purple-100 text-purple-700`}>Full</span>;
+  return <span className={`${base} bg-slate-100 text-slate-700`}>Random</span>;
+}
+
+function auditVarianceLabel(item: StockAuditItemRow): { text: string; hasVariance: boolean } {
+  if (!item.product) return { text: "—", hasVariance: false };
+  let variance = 0;
+  let unit = "";
+  if (item.product.unit_type === "kg") { variance = item.variance_kg ?? 0; unit = "kg"; }
+  else if (item.product.unit_type === "units") { variance = item.variance_units ?? 0; unit = "units"; }
+  else { variance = item.variance_boxes ?? 0; unit = "boxes"; }
+  const hasVariance = variance !== 0;
+  return {
+    text: `${variance >= 0 ? "+" : ""}${variance} ${unit}`,
+    hasVariance,
+  };
 }
 
 // ── Component ──────────────────────────────────────────────────
@@ -83,15 +136,18 @@ function statusBadge(status: string) {
 export function InventoryHistoryClient() {
   const today = format(new Date(), "yyyy-MM-dd");
 
-  const [activeSubTab, setActiveSubTab] = useState<"restocks" | "adjustments">("restocks");
+  const [activeSubTab, setActiveSubTab] = useState<"restocks" | "adjustments" | "audits">("restocks");
   const [dateFrom, setDateFrom] = useState(today);
   const [dateTo, setDateTo] = useState(today);
   const [activePreset, setActivePreset] = useState("today");
 
   const [loadingRestocks, setLoadingRestocks] = useState(true);
   const [loadingAdjustments, setLoadingAdjustments] = useState(true);
+  const [loadingAudits, setLoadingAudits] = useState(true);
   const [restocks, setRestocks] = useState<StockAdditionRow[]>([]);
   const [adjustments, setAdjustments] = useState<StockAdjustmentRow[]>([]);
+  const [audits, setAudits] = useState<StockAuditRow[]>([]);
+  const [expandedAuditId, setExpandedAuditId] = useState<string | null>(null);
 
   // ── Presets ──────────────────────────────────────────────────
   const presets = useMemo(() => {
@@ -152,7 +208,32 @@ export function InventoryHistoryClient() {
     setLoadingAdjustments(false);
   }, [dateFrom, dateTo]);
 
-  useEffect(() => { fetchRestocks(); fetchAdjustments(); }, [fetchRestocks, fetchAdjustments]);
+  // ── Fetch audits ──────────────────────────────────────────────
+  const fetchAudits = useCallback(async () => {
+    setLoadingAudits(true);
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("stock_audits")
+      .select(`
+        id, created_at, audit_date, audit_type, status, notes, completed_at,
+        conducted_by_profile:profiles!conducted_by(full_name),
+        items:stock_audit_items(
+          id, product_id,
+          system_stock_kg, system_stock_units, system_stock_boxes,
+          physical_stock_kg, physical_stock_units, physical_stock_boxes,
+          variance_kg, variance_units, variance_boxes,
+          variance_pct, within_threshold, notes,
+          product:products(id, name, unit_type)
+        )
+      `)
+      .gte("audit_date", dateFrom)
+      .lte("audit_date", dateTo)
+      .order("audit_date", { ascending: false });
+    setAudits((data as unknown as StockAuditRow[]) ?? []);
+    setLoadingAudits(false);
+  }, [dateFrom, dateTo]);
+
+  useEffect(() => { fetchRestocks(); fetchAdjustments(); fetchAudits(); }, [fetchRestocks, fetchAdjustments, fetchAudits]);
 
   // ── Export restocks CSV ───────────────────────────────────────
   function exportRestocksCSV() {
@@ -250,7 +331,64 @@ export function InventoryHistoryClient() {
     XLSX.writeFile(wb, `adjustments_${dateFrom}_to_${dateTo}.xlsx`);
   }
 
-  const isLoading = activeSubTab === "restocks" ? loadingRestocks : loadingAdjustments;
+  // ── Export audits CSV ─────────────────────────────────────────
+  function exportAuditsCSV() {
+    const rows = [
+      "Audit Date,Type,Status,Conducted By,Total Items,Items With Variance,Notes",
+      ...audits.map((a) => {
+        const variances = a.items.filter((i) => {
+          const v = auditVarianceLabel(i);
+          return v.hasVariance;
+        }).length;
+        return [
+          a.audit_date,
+          a.audit_type,
+          a.status,
+          `"${a.conducted_by_profile?.full_name ?? ""}"`,
+          a.items.length,
+          variances,
+          `"${a.notes ?? ""}"`,
+        ].join(",");
+      }),
+    ];
+    const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `audits_${dateFrom}_to_${dateTo}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportAuditsXLSX() {
+    const wb = XLSX.utils.book_new();
+    // Summary sheet
+    const summary = [
+      ["Audit Date", "Type", "Status", "Conducted By", "Total Items", "Items With Variance", "Notes"],
+      ...audits.map((a) => {
+        const variances = a.items.filter((i) => auditVarianceLabel(i).hasVariance).length;
+        return [a.audit_date, a.audit_type, a.status, a.conducted_by_profile?.full_name ?? "", a.items.length, variances, a.notes ?? ""];
+      }),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), "Audits Summary");
+    // Detail sheet
+    const detail = [
+      ["Audit Date", "Audit Type", "Product", "System Stock", "Physical Stock", "Variance", "Within Threshold", "Notes"],
+      ...audits.flatMap((a) =>
+        a.items.map((item) => {
+          const v = auditVarianceLabel(item);
+          const ut = item.product?.unit_type ?? "";
+          const sys = ut === "kg" ? item.system_stock_kg : ut === "units" ? item.system_stock_units : item.system_stock_boxes;
+          const phy = ut === "kg" ? item.physical_stock_kg : ut === "units" ? item.physical_stock_units : item.physical_stock_boxes;
+          return [a.audit_date, a.audit_type, item.product?.name ?? "", `${sys} ${ut}`, `${phy} ${ut}`, v.text, item.within_threshold ? "Yes" : "No", item.notes ?? ""];
+        })
+      ),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detail), "Audit Detail");
+    XLSX.writeFile(wb, `audits_${dateFrom}_to_${dateTo}.xlsx`);
+  }
+
+  const isLoading = activeSubTab === "restocks" ? loadingRestocks : activeSubTab === "adjustments" ? loadingAdjustments : loadingAudits;
 
   // ── Render ────────────────────────────────────────────────────
   return (
@@ -260,9 +398,10 @@ export function InventoryHistoryClient() {
       <div className="flex gap-1 border-b pb-0">
         {(
           [
-            { key: "restocks", label: "Restocks" },
+            { key: "restocks",    label: "Restocks" },
             { key: "adjustments", label: "Adjustments" },
-          ] as { key: "restocks" | "adjustments"; label: string }[]
+            { key: "audits",      label: "Stock Audits" },
+          ] as { key: "restocks" | "adjustments" | "audits"; label: string }[]
         ).map((tab) => (
           <button
             key={tab.key}
@@ -318,7 +457,7 @@ export function InventoryHistoryClient() {
           <Button
             variant="outline"
             size="sm"
-            onClick={activeSubTab === "restocks" ? exportRestocksCSV : exportAdjustmentsCSV}
+            onClick={activeSubTab === "restocks" ? exportRestocksCSV : activeSubTab === "adjustments" ? exportAdjustmentsCSV : exportAuditsCSV}
             className="gap-1.5 text-xs h-8"
           >
             <Download className="h-3 w-3" /> CSV
@@ -326,7 +465,7 @@ export function InventoryHistoryClient() {
           <Button
             variant="outline"
             size="sm"
-            onClick={activeSubTab === "restocks" ? exportRestocksXLSX : exportAdjustmentsXLSX}
+            onClick={activeSubTab === "restocks" ? exportRestocksXLSX : activeSubTab === "adjustments" ? exportAdjustmentsXLSX : exportAuditsXLSX}
             className="gap-1.5 text-xs h-8"
           >
             <FileSpreadsheet className="h-3 w-3" /> XLSX
@@ -356,7 +495,7 @@ export function InventoryHistoryClient() {
                 </CardContent>
               </Card>
             </>
-          ) : (
+          ) : activeSubTab === "adjustments" ? (
             <>
               <Card className="bg-blue-50 border-blue-100">
                 <CardContent className="p-3">
@@ -372,6 +511,25 @@ export function InventoryHistoryClient() {
                     {adjustments.filter((a) => a.approval_status === "pending").length}
                   </p>
                   <p className="text-xs text-amber-600">awaiting review</p>
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            <>
+              <Card className="bg-blue-50 border-blue-100">
+                <CardContent className="p-3">
+                  <p className="text-xs font-medium text-blue-600">Total Audits</p>
+                  <p className="text-xl font-bold text-blue-900">{audits.length}</p>
+                  <p className="text-xs text-blue-600">in selected period</p>
+                </CardContent>
+              </Card>
+              <Card className="bg-red-50 border-red-100">
+                <CardContent className="p-3">
+                  <p className="text-xs font-medium text-red-600">Items With Variance</p>
+                  <p className="text-xl font-bold text-red-900">
+                    {audits.flatMap((a) => a.items).filter((i) => auditVarianceLabel(i).hasVariance).length}
+                  </p>
+                  <p className="text-xs text-red-600">across all audits</p>
                 </CardContent>
               </Card>
             </>
@@ -427,6 +585,102 @@ export function InventoryHistoryClient() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+      ) : activeSubTab === "audits" ? (
+
+        /* ══════════════ AUDITS TABLE ══════════════ */
+        <Card>
+          <CardContent className="p-0">
+            {audits.length === 0 ? (
+              <div className="py-20 text-center text-sm text-slate-500">No stock audits recorded for this period</div>
+            ) : (
+              <div className="divide-y">
+                {audits.map((audit) => {
+                  const isExpanded = expandedAuditId === audit.id;
+                  const varianceItems = audit.items.filter((i) => auditVarianceLabel(i).hasVariance);
+                  return (
+                    <div key={audit.id}>
+                      {/* Audit header row */}
+                      <button
+                        className="w-full text-left px-4 py-3 hover:bg-slate-50 flex items-center gap-3"
+                        onClick={() => setExpandedAuditId(isExpanded ? null : audit.id)}
+                      >
+                        {isExpanded
+                          ? <ChevronDown className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                          : <ChevronRight className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                        }
+                        <div className="flex-1 grid grid-cols-2 sm:grid-cols-5 gap-2 items-center text-sm">
+                          <span className="font-medium text-slate-800">
+                            {format(parseISO(audit.audit_date), "d MMM yyyy")}
+                          </span>
+                          <span className="hidden sm:block">{auditTypeBadge(audit.audit_type)}</span>
+                          <span>{statusBadge(audit.status)}</span>
+                          <span className="hidden sm:block text-slate-500 text-xs">
+                            {audit.conducted_by_profile?.full_name ?? "—"}
+                          </span>
+                          <span className="text-xs text-slate-500 text-right sm:text-left">
+                            {audit.items.length} item{audit.items.length !== 1 ? "s" : ""}
+                            {varianceItems.length > 0 && (
+                              <span className="ml-1.5 text-red-600 font-medium">
+                                · {varianceItems.length} variance{varianceItems.length !== 1 ? "s" : ""}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      </button>
+
+                      {/* Expanded items */}
+                      {isExpanded && audit.items.length > 0 && (
+                        <div className="bg-slate-50 border-t px-4 py-3">
+                          {audit.notes && (
+                            <p className="text-xs text-slate-500 mb-3 italic">{audit.notes}</p>
+                          )}
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="text-slate-400">
+                                  <th className="text-left py-1.5 pr-4 font-medium">Product</th>
+                                  <th className="text-right py-1.5 pr-4 font-medium">System Stock</th>
+                                  <th className="text-right py-1.5 pr-4 font-medium">Physical Count</th>
+                                  <th className="text-right py-1.5 pr-4 font-medium">Variance</th>
+                                  <th className="text-center py-1.5 font-medium">OK?</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-200">
+                                {audit.items.map((item) => {
+                                  const ut = item.product?.unit_type ?? "kg";
+                                  const sys = ut === "kg" ? item.system_stock_kg : ut === "units" ? item.system_stock_units : item.system_stock_boxes;
+                                  const phy = ut === "kg" ? item.physical_stock_kg : ut === "units" ? item.physical_stock_units : item.physical_stock_boxes;
+                                  const v = auditVarianceLabel(item);
+                                  return (
+                                    <tr key={item.id} className={v.hasVariance ? "bg-red-50" : ""}>
+                                      <td className="py-2 pr-4 font-medium text-slate-700">{item.product?.name ?? "—"}</td>
+                                      <td className="py-2 pr-4 text-right text-slate-600">{sys} {ut}</td>
+                                      <td className="py-2 pr-4 text-right text-slate-600">{phy} {ut}</td>
+                                      <td className={`py-2 pr-4 text-right font-semibold ${v.hasVariance ? "text-red-600" : "text-slate-400"}`}>
+                                        {v.text}
+                                      </td>
+                                      <td className="py-2 text-center">
+                                        {item.within_threshold
+                                          ? <span className="text-green-600">✓</span>
+                                          : <span className="text-red-600">✗</span>
+                                        }
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </CardContent>
