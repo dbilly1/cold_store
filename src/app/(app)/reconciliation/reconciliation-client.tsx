@@ -257,7 +257,7 @@ export function ReconciliationClient({
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
         {/* ── Left: Session forms ── */}
@@ -272,7 +272,7 @@ export function ReconciliationClient({
                 value={selectedDate}
                 max={today}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                className="h-8 text-sm w-36"
+                className="h-8 text-sm w-full sm:w-36"
               />
             </div>
           </div>
@@ -521,7 +521,7 @@ export function ReconciliationClient({
         {/* ── Right: History table ── */}
         <div>
           <h2 className="font-semibold mb-3">Reconciliation History</h2>
-          <div className="bg-white rounded-lg border overflow-hidden">
+          <div className="bg-white rounded-lg border overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 border-b">
                 <tr>

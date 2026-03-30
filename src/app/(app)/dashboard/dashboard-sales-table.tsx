@@ -53,6 +53,7 @@ export function DashboardSalesTable({ sales }: { sales: SaleRow[] }) {
       </CardHeader>
 
       <CardContent className="flex-1 overflow-auto p-0">
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 sticky top-0">
             <tr>
@@ -107,6 +108,7 @@ export function DashboardSalesTable({ sales }: { sales: SaleRow[] }) {
             ))}
           </tbody>
         </table>
+        </div>
       </CardContent>
     </Card>
   );

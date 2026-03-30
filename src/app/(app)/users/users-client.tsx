@@ -48,7 +48,7 @@ export function UsersClient({ users: initial }: { users: Profile[] }) {
   const approved = users.filter(u => u.is_approved);
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-6">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
       {/* Pending approvals */}
       {pending.length > 0 && (
         <div>
@@ -56,7 +56,7 @@ export function UsersClient({ users: initial }: { users: Profile[] }) {
             <UserCheck className="h-4 w-4 text-amber-500" />
             Pending Approval ({pending.length})
           </h2>
-          <div className="bg-amber-50 rounded-lg border border-amber-200 overflow-hidden">
+          <div className="bg-amber-50 rounded-lg border border-amber-200 overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-amber-100 border-b border-amber-200">
                 <tr>
@@ -99,7 +99,7 @@ export function UsersClient({ users: initial }: { users: Profile[] }) {
       {/* All users */}
       <div>
         <h2 className="font-semibold mb-3">Active Users ({approved.length})</h2>
-        <div className="bg-white rounded-lg border overflow-hidden">
+        <div className="bg-white rounded-lg border overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b">
               <tr>
@@ -123,7 +123,7 @@ export function UsersClient({ users: initial }: { users: Profile[] }) {
                       </span>
                     ) : (
                       <Select value={user.role} onValueChange={(v) => changeRole(user.id, v as UserRole)}>
-                        <SelectTrigger className="h-7 w-36 text-xs">
+                        <SelectTrigger className="h-7 w-full sm:w-36 text-xs">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>

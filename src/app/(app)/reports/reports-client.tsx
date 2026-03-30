@@ -262,7 +262,7 @@ export function ReportsClient({
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-6">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
 
       {/* Date range picker */}
       <div className="flex items-center gap-3 bg-white border rounded-lg p-3 flex-wrap">
@@ -290,7 +290,7 @@ export function ReportsClient({
       </div>
 
       {/* KPI Row — 6 cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         {/* Total Revenue */}
         <Card>
           <CardContent className="p-4">

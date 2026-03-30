@@ -62,7 +62,7 @@ export function AlertsClient({ alerts: initial }: { alerts: Alert[] }) {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6">
       <div className="flex items-center gap-3 mb-6">
         <div className="flex items-center gap-2">
           <Bell className="h-4 w-4 text-amber-500" />

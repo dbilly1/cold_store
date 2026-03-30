@@ -392,7 +392,7 @@ export function InventoryHistoryClient() {
 
   // ── Render ────────────────────────────────────────────────────
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
 
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b pb-0">

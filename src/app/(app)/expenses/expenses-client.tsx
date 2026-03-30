@@ -161,7 +161,7 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
     CATEGORIES.find(c => c.value === cat)?.color ?? "bg-slate-100 text-slate-800";
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6">
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Summary sidebar */}
         <div className="space-y-4">
@@ -200,7 +200,7 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
 
         {/* Expense list */}
         <div className="lg:col-span-3">
-          <div className="bg-white rounded-lg border overflow-hidden">
+          <div className="bg-white rounded-lg border overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 border-b">
                 <tr>

@@ -140,7 +140,7 @@ export function AdjustmentsClient({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6">
       <div className="flex justify-between items-center mb-6">
         <h2 className="font-semibold text-slate-700">Recent Adjustments</h2>
         <Button onClick={() => setDialog(true)}>
@@ -148,7 +148,7 @@ export function AdjustmentsClient({
         </Button>
       </div>
 
-      <div className="bg-white rounded-lg border overflow-hidden">
+      <div className="bg-white rounded-lg border overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 border-b">
             <tr>

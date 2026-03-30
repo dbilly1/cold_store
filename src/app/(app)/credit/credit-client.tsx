@@ -304,9 +304,9 @@ export function CreditClient({
   }
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
       {/* ── Left panel: customer list ── */}
-      <div className="w-72 border-r bg-white flex flex-col overflow-hidden flex-shrink-0">
+      <div className="w-full lg:w-72 border-b lg:border-b-0 lg:border-r bg-white flex flex-col overflow-hidden flex-shrink-0">
         <div className="p-4 border-b flex items-center justify-between">
           <h2 className="font-semibold text-slate-800">Customers</h2>
           <Button
@@ -366,7 +366,7 @@ export function CreditClient({
       </div>
 
       {/* ── Right panel: customer ledger ── */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6">
         {!selectedCustomer ? (
           <div className="flex flex-col items-center justify-center h-full text-slate-400">
             <User className="h-12 w-12 mb-3" />
@@ -488,7 +488,7 @@ export function CreditClient({
               {selectedSales.length === 0 ? (
                 <p className="text-sm text-slate-400">No credit sales recorded</p>
               ) : (
-                <div className="border rounded-lg overflow-hidden">
+                <div className="border rounded-lg overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-slate-50 border-b">
                       <tr>
@@ -538,7 +538,7 @@ export function CreditClient({
               {selectedPayments.length === 0 ? (
                 <p className="text-sm text-slate-400">No payments recorded yet</p>
               ) : (
-                <div className="border rounded-lg overflow-hidden">
+                <div className="border rounded-lg overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-slate-50 border-b">
                       <tr>

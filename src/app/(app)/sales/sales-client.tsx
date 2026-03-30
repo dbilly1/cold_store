@@ -1046,7 +1046,7 @@ export function SalesClient({
       </div>
 
       {/* ── Right panel ── */}
-      <div className="flex-1 lg:overflow-y-auto p-6">
+      <div className="flex-1 lg:overflow-y-auto p-4 md:p-6">
         {/* ─ Salesperson: today's sales cards ─ */}
         {isSalesperson && (
           <>
@@ -1177,7 +1177,7 @@ export function SalesClient({
                 No sales recorded yet
               </div>
             ) : (
-              <div className="bg-white rounded-lg border overflow-hidden">
+              <div className="bg-white rounded-lg border overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 border-b">
                     <tr>
@@ -1463,7 +1463,7 @@ export function SalesClient({
                       <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
                         Direct Entries ({solos.length})
                       </h3>
-                      <div className="bg-white rounded-lg border overflow-hidden">
+                      <div className="bg-white rounded-lg border overflow-x-auto">
                         <SaleTable sales={solos} />
                       </div>
                     </div>

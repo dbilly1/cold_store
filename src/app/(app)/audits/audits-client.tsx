@@ -296,7 +296,7 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
     }).length;
 
     return (
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -357,7 +357,7 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
         </div>
 
         {/* Count table */}
-        <div className="bg-white rounded-lg border overflow-hidden">
+        <div className="bg-white rounded-lg border overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b">
               <tr>
@@ -491,7 +491,7 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
 
   // ── Default view: start audit + history ──
   return (
-    <div className="flex-1 overflow-y-auto p-6">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
         {/* Start Audit Panel */}
