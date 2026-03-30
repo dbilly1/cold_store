@@ -110,7 +110,7 @@ export function ReportsClient({
   dataStartDate: string;
 }) {
   const [dateFrom, setDateFrom] = useState(
-    format(subDays(new Date(), 7), "yyyy-MM-dd"),
+    format(subDays(new Date(), 30), "yyyy-MM-dd"),
   );
   const [dateTo, setDateTo] = useState(format(new Date(), "yyyy-MM-dd"));
 
