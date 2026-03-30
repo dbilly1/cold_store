@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -9,14 +9,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Snowflake } from "lucide-react";
+import { Snowflake, Clock } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const timedOut = searchParams.get("reason") === "timeout";
+
+  useEffect(() => {
+    if (timedOut) {
+      toast({
+        title: "Signed out due to inactivity",
+        description: "Your session expired after 30 minutes of inactivity. Please sign in again.",
+        variant: "destructive",
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -60,6 +73,12 @@ export default function LoginPage() {
           <CardTitle className="text-2xl">Cold Store</CardTitle>
           <CardDescription>Sign in to manage inventory & sales</CardDescription>
         </CardHeader>
+        {timedOut && (
+          <div className="mx-6 mb-2 flex items-center gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-700">
+            <Clock className="h-4 w-4 flex-shrink-0" />
+            You were signed out after 30 minutes of inactivity.
+          </div>
+        )}
         <form onSubmit={handleLogin}>
           <CardContent className="space-y-4">
             <div className="space-y-2">
