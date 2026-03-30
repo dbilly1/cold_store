@@ -29,10 +29,10 @@ export function SessionTimeout() {
   const [showWarning, setShowWarning] = useState(false);
   const [countdown, setCountdown]     = useState(120);
 
-  const warningTimer   = useRef<ReturnType<typeof setTimeout>>();
-  const logoutTimer    = useRef<ReturnType<typeof setTimeout>>();
-  const absoluteTimer  = useRef<ReturnType<typeof setTimeout>>();
-  const countdownTimer = useRef<ReturnType<typeof setInterval>>();
+  const warningTimer   = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const logoutTimer    = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const absoluteTimer  = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const countdownTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const warningShowing = useRef(false);
 
   // ── Sign out ─────────────────────────────────────────────────
