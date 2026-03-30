@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -11,13 +11,10 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { useToast } from "@/hooks/use-toast";
 import { Snowflake, Clock } from "lucide-react";
 
-export default function LoginPage() {
-  const router = useRouter();
+// ── Timeout banner — isolated so useSearchParams is inside Suspense ──
+function TimeoutBanner() {
   const searchParams = useSearchParams();
   const { toast } = useToast();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
   const timedOut = searchParams.get("reason") === "timeout";
 
   useEffect(() => {
@@ -31,6 +28,24 @@ export default function LoginPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  if (!timedOut) return null;
+
+  return (
+    <div className="mx-6 mb-2 flex items-center gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-700">
+      <Clock className="h-4 w-4 flex-shrink-0" />
+      You were signed out after 30 minutes of inactivity.
+    </div>
+  );
+}
+
+// ── Main login page ───────────────────────────────────────────
+export default function LoginPage() {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -43,7 +58,6 @@ export default function LoginPage() {
       return;
     }
 
-    // Check if approved
     const { data: { user } } = await supabase.auth.getUser();
     const { data: profile } = await supabase
       .from("profiles")
@@ -73,12 +87,12 @@ export default function LoginPage() {
           <CardTitle className="text-2xl">Cold Store</CardTitle>
           <CardDescription>Sign in to manage inventory & sales</CardDescription>
         </CardHeader>
-        {timedOut && (
-          <div className="mx-6 mb-2 flex items-center gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-700">
-            <Clock className="h-4 w-4 flex-shrink-0" />
-            You were signed out after 30 minutes of inactivity.
-          </div>
-        )}
+
+        {/* Suspense required by Next.js whenever useSearchParams is used */}
+        <Suspense fallback={null}>
+          <TimeoutBanner />
+        </Suspense>
+
         <form onSubmit={handleLogin}>
           <CardContent className="space-y-4">
             <div className="space-y-2">
