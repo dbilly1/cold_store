@@ -1,9 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/layout/top-bar";
 import { ReportsClient } from "./reports-client";
-
-export const revalidate = 300; // refresh every 5 minutes
 import { format, subDays } from "date-fns";
+
+export const dynamic = "force-dynamic";
 
 export default async function ReportsPage() {
   const supabase = await createClient();
@@ -27,14 +27,14 @@ export default async function ReportsPage() {
       .eq("is_deleted", false)
       .order("sale_date"),
 
-    // Expenses
+    // Expenses — all within data window, no stale cache
     supabase
       .from("expenses")
       .select("expense_date, amount, category")
       .gte("expense_date", oneYearAgo)
       .order("expense_date"),
 
-    // Per-product sales — include quantity_boxes and payment_method
+    // Per-product sales with server-side date filter to avoid fetching all-time data
     supabase
       .from("sale_items")
       .select(
@@ -42,7 +42,8 @@ export default async function ReportsPage() {
          product:products(name, unit_type),
          sale:sales!inner(sale_date, is_deleted, payment_method)`,
       )
-      .eq("sale.is_deleted" as never, false),
+      .eq("sale.is_deleted" as never, false)
+      .gte("sale.sale_date" as never, oneYearAgo),
 
     // Credit repayments (for outstanding balance calc)
     supabase
