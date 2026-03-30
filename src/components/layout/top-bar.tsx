@@ -1,10 +1,10 @@
 "use client";
 
 import { useProfile } from "@/hooks/use-profile";
-import { Bell, Menu } from "lucide-react";
-import Link from "next/link";
+import { Menu } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { useSidebarContext } from "./sidebar-context";
+import { AlertBell } from "./alert-bell";
 
 export function TopBar({ title }: { title: string }) {
   const { profile } = useProfile();
@@ -26,9 +26,7 @@ export function TopBar({ title }: { title: string }) {
       <div className="flex items-center gap-4">
         <span className="text-sm text-slate-500">{formatDate(new Date())}</span>
         {(profile?.role === "admin" || profile?.role === "supervisor") && (
-          <Link href="/alerts" className="relative p-2 hover:bg-slate-100 rounded-lg transition-colors">
-            <Bell className="h-5 w-5 text-slate-600" />
-          </Link>
+          <AlertBell />
         )}
         <div className="flex items-center gap-2">
           <div className="h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center">

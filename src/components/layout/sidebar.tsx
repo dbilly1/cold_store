@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { getRoleLabel, getRoleBadgeColor } from "@/lib/utils";
 import {
   LayoutDashboard, ShoppingCart, Package, Sliders, ClipboardList,
-  Calculator, Receipt, BarChart3, Bell, ScrollText, Settings,
+  Calculator, Receipt, BarChart3, ScrollText, Settings,
   LogOut, Snowflake, Users, ChevronRight, CreditCard, History, X,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -32,7 +32,6 @@ const navItems: NavItem[] = [
   { label: "Credit", href: "/credit", icon: CreditCard, roles: ["supervisor", "accountant", "admin"] },
   { label: "History", href: "/history", icon: History, roles: ["supervisor", "accountant", "admin"] },
   { label: "Reports", href: "/reports", icon: BarChart3, roles: ["supervisor", "accountant", "admin"] },
-  { label: "Alerts", href: "/alerts", icon: Bell, roles: ["supervisor", "admin"] },
   { label: "Audit Log", href: "/audit-log", icon: ScrollText, roles: ["admin"] },
   { label: "Users", href: "/users", icon: Users, roles: ["admin"] },
   { label: "Settings", href: "/settings", icon: Settings, roles: ["admin"] },
