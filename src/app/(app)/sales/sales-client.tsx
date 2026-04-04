@@ -201,6 +201,7 @@ export function SalesClient({
   const { toast } = useToast();
   const { profile } = useProfile();
   const [sales, setSales] = useState<ExistingSale[]>(initialSales);
+  const [localDailySummaries, setLocalDailySummaries] = useState<DailySummary[]>(dailySummaries);
   const [customers, setCustomers] = useState<Customer[]>(initialCustomers);
   const [creditCustomerId, setCreditCustomerId] = useState("");
   // Quick-add customer dialog
@@ -702,6 +703,31 @@ export function SalesClient({
     });
   }
 
+  // Re-fetches one date row and updates localDailySummaries in place.
+  async function refreshSummaryRow(supabase: ReturnType<typeof createClient>, date: string) {
+    const { data } = await supabase
+      .from("sales")
+      .select("total_amount, payment_method")
+      .eq("sale_date", date)
+      .eq("is_deleted", false);
+    if (!data) return;
+    const count   = data.length;
+    const revenue = data.reduce((s, r) => s + r.total_amount, 0);
+    const cash    = data.filter((r) => r.payment_method === "cash").reduce((s, r) => s + r.total_amount, 0);
+    const mobile  = data.filter((r) => r.payment_method === "mobile_money").reduce((s, r) => s + r.total_amount, 0);
+    setLocalDailySummaries((prev) => {
+      const exists = prev.some((row) => row.date === date);
+      const updated = prev.map((row) =>
+        row.date === date ? { ...row, count, revenue, cash, mobile } : row,
+      );
+      if (!exists && count > 0) {
+        updated.push({ date, count, revenue, cash, mobile, cash_variance: null, mobile_variance: null });
+        updated.sort((a, b) => b.date.localeCompare(a.date));
+      }
+      return updated;
+    });
+  }
+
   async function handleEditSave() {
     setEditSaving(true);
     const supabase = createClient();
@@ -806,17 +832,20 @@ export function SalesClient({
     const originalDate = editDialog.original_sale_date;
     const inDrillDown  = selectedDate !== null;
 
-    const fresh = await refreshSales(supabase, refreshDate);
-    if (fresh) {
-      if (inDrillDown) setDayDetails(fresh as unknown as ExistingSale[]);
-      else setSales(fresh as unknown as ExistingSale[]);
+    if (inDrillDown) {
+      // Re-use the same tested fetch path as clicking a date row.
+      await openDay(refreshDate);
+    } else {
+      // Salesperson view: update the flat sales list for today.
+      const fresh = await refreshSales(supabase, refreshDate);
+      if (fresh) setSales(fresh as unknown as ExistingSale[]);
     }
-    // If the date was changed, also refresh the original date's list
-    if (originalDate && originalDate !== refreshDate) {
-      const originalFresh = await refreshSales(supabase, originalDate);
-      if (originalFresh) {
-        if (inDrillDown) setDayDetails(originalFresh as unknown as ExistingSale[]);
-        else setSales(originalFresh as unknown as ExistingSale[]);
+
+    // Always keep the summary table in sync (non-salesperson only).
+    if (!isSalesperson) {
+      await refreshSummaryRow(supabase, refreshDate);
+      if (originalDate && originalDate !== refreshDate) {
+        await refreshSummaryRow(supabase, originalDate);
       }
     }
 
@@ -1226,7 +1255,7 @@ export function SalesClient({
                 Last 90 days · click a row to see transactions
               </p>
             </div>
-            {dailySummaries.length === 0 ? (
+            {localDailySummaries.length === 0 ? (
               <div className="flex items-center justify-center h-48 text-muted-foreground">
                 No sales recorded yet
               </div>
@@ -1257,7 +1286,7 @@ export function SalesClient({
                     </tr>
                   </thead>
                   <tbody>
-                    {dailySummaries.map((row) => {
+                    {localDailySummaries.map((row) => {
                       const isToday = row.date === today;
                       const cashVar = row.cash_variance;
                       const mobileVar = row.mobile_variance;
