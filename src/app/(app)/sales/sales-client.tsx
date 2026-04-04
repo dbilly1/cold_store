@@ -252,6 +252,7 @@ export function SalesClient({
   // Edit dialog
   interface EditItem {
     id: string;
+    product_id: string;
     productName: string;
     unit_type: string;
     quantity: string;
@@ -689,6 +690,7 @@ export function SalesClient({
           : item.quantity_units;
         return {
           id: item.id,
+          product_id: item.product_id,
           productName: (item.product as { name: string; unit_type: string } | null)?.name ?? "Unknown",
           unit_type: ut,
           quantity: qty.toString(),
@@ -705,28 +707,73 @@ export function SalesClient({
     const supabase = createClient();
     let newTotal = 0;
 
+    // Fetch current quantities before making any changes so we can
+    // calculate the stock delta (old qty → new qty) per product
+    const { data: oldItems } = await supabase
+      .from("sale_items")
+      .select("id, product_id, quantity_kg, quantity_units, quantity_boxes")
+      .in("id", editDialog.items.map((i) => i.id));
+
     for (const item of editDialog.items) {
-      const qty = parseFloat(item.quantity) || 0;
-      const qBoxes = item.unit_type === "boxes" ? qty : parseFloat(item.quantity_boxes) || 0;
-      const price = parseFloat(item.unit_price) || 0;
-      const disc = parseFloat(item.discount_amount) || 0;
+      const qty     = parseFloat(item.quantity)      || 0;
+      const qBoxes  = item.unit_type === "boxes" ? qty : parseFloat(item.quantity_boxes) || 0;
+      const price   = parseFloat(item.unit_price)    || 0;
+      const disc    = parseFloat(item.discount_amount) || 0;
       const effectiveQty = item.unit_type === "boxes" ? qBoxes : qty;
-      const lineTotal = Math.max(0, effectiveQty * price - disc);
+      const lineTotal    = Math.max(0, effectiveQty * price - disc);
       newTotal += lineTotal;
 
       const { error } = await supabase.from("sale_items").update({
-        quantity_kg: item.unit_type === "kg" ? qty : 0,
-        quantity_units: item.unit_type === "units" ? qty : 0,
-        quantity_boxes: qBoxes,
-        unit_price: price,
+        quantity_kg:     item.unit_type === "kg"    ? qty : 0,
+        quantity_units:  item.unit_type === "units" ? qty : 0,
+        quantity_boxes:  qBoxes,
+        unit_price:      price,
         discount_amount: disc,
-        line_total: lineTotal,
+        line_total:      lineTotal,
       }).eq("id", item.id);
 
       if (error) {
         toast({ title: "Failed to update item", description: error.message, variant: "destructive" });
         setEditSaving(false);
         return;
+      }
+
+      // ── Apply stock delta ─────────────────────────────────────
+      // Triggers only fire on INSERT/soft-delete, not UPDATE, so we
+      // manually compute old→new difference and push it to the product.
+      // Delta is negative of the qty change: selling more → stock goes down.
+      const old = oldItems?.find((o) => o.id === item.id);
+      if (old) {
+        const product    = products.find((p) => p.id === item.product_id);
+        const upb        = product?.units_per_box ?? 0;
+
+        let deltaKg    = 0;
+        let deltaUnits = 0;
+        let deltaBoxes = 0;
+
+        if (item.unit_type === "kg") {
+          const oldTotal = (old.quantity_kg ?? 0) + (old.quantity_boxes ?? 0) * upb;
+          const newTotal_ = qty + qBoxes * upb;
+          deltaKg    = -(newTotal_ - oldTotal);
+          deltaBoxes = -(qBoxes - (old.quantity_boxes ?? 0));
+        } else if (item.unit_type === "units") {
+          const oldTotal = (old.quantity_units ?? 0) + (old.quantity_boxes ?? 0) * upb;
+          const newTotal_ = qty + qBoxes * upb;
+          deltaUnits = -(newTotal_ - oldTotal);
+          deltaBoxes = -(qBoxes - (old.quantity_boxes ?? 0));
+        } else {
+          // boxes product
+          deltaBoxes = -(qty - (old.quantity_boxes ?? 0));
+        }
+
+        if (deltaKg !== 0 || deltaUnits !== 0 || deltaBoxes !== 0) {
+          await supabase.rpc("apply_sale_item_stock_delta", {
+            p_product_id:  item.product_id,
+            p_delta_kg:    deltaKg,
+            p_delta_units: deltaUnits,
+            p_delta_boxes: deltaBoxes,
+          });
+        }
       }
     }
 
@@ -751,20 +798,25 @@ export function SalesClient({
       new_value: { total_amount: newTotal, payment_method: editDialog.paymentMethod },
     });
 
-    // Refresh the relevant list
-    const refreshDate = editDialog.sale_date;
+    // Refresh the relevant list.
+    // Use selectedDate (which view is currently shown) not sale_date to
+    // decide which state to update — a non-salesperson can view today's
+    // sales via the drill-down (dayDetails), not the main sales list.
+    const refreshDate  = editDialog.sale_date;
     const originalDate = editDialog.original_sale_date;
+    const inDrillDown  = selectedDate !== null;
+
     const fresh = await refreshSales(supabase, refreshDate);
     if (fresh) {
-      if (refreshDate === today) setSales(fresh as unknown as ExistingSale[]);
-      else setDayDetails(fresh as unknown as ExistingSale[]);
+      if (inDrillDown) setDayDetails(fresh as unknown as ExistingSale[]);
+      else setSales(fresh as unknown as ExistingSale[]);
     }
     // If the date was changed, also refresh the original date's list
     if (originalDate && originalDate !== refreshDate) {
       const originalFresh = await refreshSales(supabase, originalDate);
       if (originalFresh) {
-        if (originalDate === today) setSales(originalFresh as unknown as ExistingSale[]);
-        else setDayDetails(originalFresh as unknown as ExistingSale[]);
+        if (inDrillDown) setDayDetails(originalFresh as unknown as ExistingSale[]);
+        else setSales(originalFresh as unknown as ExistingSale[]);
       }
     }
 
@@ -1121,8 +1173,10 @@ export function SalesClient({
                                 ·{" "}
                                 {item.quantity_kg > 0
                                   ? `${item.quantity_kg} kg`
-                                  : `${item.quantity_units} units`}
-                                {item.quantity_boxes > 0
+                                  : item.quantity_units > 0
+                                  ? `${item.quantity_units} units`
+                                  : `${item.quantity_boxes} boxes`}
+                                {(item.quantity_boxes > 0 && (item.quantity_kg > 0 || item.quantity_units > 0))
                                   ? ` + ${item.quantity_boxes} boxes`
                                   : ""}{" "}
                                 · {formatCurrency(item.line_total)}
@@ -2096,10 +2150,12 @@ export function SalesClient({
               <span>New Total</span>
               <span className="text-blue-600">
                 {formatCurrency(editDialog.items.reduce((s, item) => {
-                  const qty = parseFloat(item.quantity) || 0;
-                  const price = parseFloat(item.unit_price) || 0;
-                  const disc = parseFloat(item.discount_amount) || 0;
-                  return s + Math.max(0, qty * price - disc);
+                  const qty    = parseFloat(item.quantity) || 0;
+                  const qBoxes = item.unit_type === "boxes" ? qty : parseFloat(item.quantity_boxes) || 0;
+                  const price  = parseFloat(item.unit_price) || 0;
+                  const disc   = parseFloat(item.discount_amount) || 0;
+                  const effectiveQty = item.unit_type === "boxes" ? qBoxes : qty;
+                  return s + Math.max(0, effectiveQty * price - disc);
                 }, 0))}
               </span>
             </div>
