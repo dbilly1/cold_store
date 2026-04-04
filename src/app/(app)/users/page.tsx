@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/layout/top-bar";
 import { UsersClient } from "./users-client";
 
-export const revalidate = 3600; // refresh every hour
+export const dynamic = "force-dynamic";
 
 export default async function UsersPage() {
   const supabase = await createClient();

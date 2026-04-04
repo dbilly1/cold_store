@@ -7,14 +7,28 @@ import { useProfile } from "@/hooks/use-profile";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { formatDateTime, getRoleLabel, getRoleBadgeColor } from "@/lib/utils";
-import { CheckCircle, XCircle, UserCheck } from "lucide-react";
+import { CheckCircle, XCircle, UserCheck, Trash2 } from "lucide-react";
 import type { Profile, UserRole } from "@/types/database";
 
 export function UsersClient({ users: initial }: { users: Profile[] }) {
   const { toast } = useToast();
   const { profile: currentUser } = useProfile();
   const [users, setUsers] = useState<Profile[]>(initial);
+  const [deleteDialog, setDeleteDialog] = useState<{
+    open: boolean;
+    userId: string;
+    userName: string;
+  }>({ open: false, userId: "", userName: "" });
+  const [deleting, setDeleting] = useState(false);
 
   async function approve(userId: string) {
     const supabase = createClient();
@@ -44,6 +58,22 @@ export function UsersClient({ users: initial }: { users: Profile[] }) {
     toast({ title: "Role updated" });
   }
 
+  async function deleteUser() {
+    setDeleting(true);
+    const res = await fetch(`/api/users/${deleteDialog.userId}`, { method: "DELETE" });
+    const json = await res.json();
+    if (!res.ok) {
+      toast({ title: "Failed to delete user", description: json.error, variant: "destructive" });
+      setDeleting(false);
+      return;
+    }
+    setUsers((prev) => prev.filter((u) => u.id !== deleteDialog.userId));
+    setDeleteDialog({ open: false, userId: "", userName: "" });
+    toast({ title: "User deleted", description: `${deleteDialog.userName} has been removed from the system.` });
+    setDeleting(false);
+  }
+
+  const isAdmin = currentUser?.role === "admin";
   const pending = users.filter(u => !u.is_approved);
   const approved = users.filter(u => u.is_approved);
 
@@ -86,6 +116,15 @@ export function UsersClient({ users: initial }: { users: Profile[] }) {
                         <Button size="sm" variant="destructive" onClick={() => revoke(user.id)} className="h-7">
                           <XCircle className="h-3.5 w-3.5 mr-1" /> Reject
                         </Button>
+                        {isAdmin && (
+                          <Button
+                            size="sm" variant="ghost"
+                            className="h-7 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => setDeleteDialog({ open: true, userId: user.id, userName: user.full_name })}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -142,16 +181,28 @@ export function UsersClient({ users: initial }: { users: Profile[] }) {
                     </Badge>
                   </td>
                   <td className="p-3 text-center">
-                    {user.id !== currentUser?.id && user.is_approved && (
-                      <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600 hover:text-red-700" onClick={() => revoke(user.id)}>
-                        Revoke
-                      </Button>
-                    )}
-                    {user.id !== currentUser?.id && !user.is_approved && (
-                      <Button size="sm" variant="ghost" className="h-7 text-xs text-green-600" onClick={() => approve(user.id)}>
-                        Approve
-                      </Button>
-                    )}
+                    <div className="flex justify-center items-center gap-1">
+                      {user.id !== currentUser?.id && user.is_approved && (
+                        <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600 hover:text-red-700" onClick={() => revoke(user.id)}>
+                          Revoke
+                        </Button>
+                      )}
+                      {user.id !== currentUser?.id && !user.is_approved && (
+                        <Button size="sm" variant="ghost" className="h-7 text-xs text-green-600" onClick={() => approve(user.id)}>
+                          Approve
+                        </Button>
+                      )}
+                      {isAdmin && user.id !== currentUser?.id && (
+                        <Button
+                          size="sm" variant="ghost"
+                          className="h-7 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          title="Delete user"
+                          onClick={() => setDeleteDialog({ open: true, userId: user.id, userName: user.full_name })}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -159,6 +210,37 @@ export function UsersClient({ users: initial }: { users: Profile[] }) {
           </table>
         </div>
       </div>
+      {/* Delete confirmation dialog */}
+      <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, userId: "", userName: "" })}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <Trash2 className="h-5 w-5" /> Delete User
+            </DialogTitle>
+            <DialogDescription>
+              This action is permanent and cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <p className="text-sm text-slate-700">
+              Are you sure you want to delete{" "}
+              <span className="font-semibold">{deleteDialog.userName}</span>?
+            </p>
+            <p className="text-xs text-slate-500 mt-1">
+              Their account, login credentials, and profile will be permanently removed from the system.
+              Sales and other records they created will remain.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialog({ open: false, userId: "", userName: "" })} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={deleteUser} disabled={deleting}>
+              {deleting ? "Deleting..." : "Delete User"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
