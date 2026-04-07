@@ -40,8 +40,12 @@ export function SessionTimeout() {
     clearTimeout(warningTimer.current);
     clearTimeout(logoutTimer.current);
     clearInterval(countdownTimer.current);
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error("signOut error:", err);
+    }
     router.push("/login?reason=timeout");
   }, [router]);
 

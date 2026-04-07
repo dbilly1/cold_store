@@ -12,12 +12,17 @@ export function useProfile() {
     const supabase = createClient();
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { setLoading(false); return; }
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("profiles")
         .select("*")
         .eq("id", user.id)
         .single();
-      setProfile(data);
+      if (error) {
+        console.error("Failed to load profile:", error.message);
+        setProfile(null);
+      } else {
+        setProfile(data);
+      }
       setLoading(false);
     });
   }, []);

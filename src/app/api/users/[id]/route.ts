@@ -28,11 +28,15 @@ export async function DELETE(
   }
 
   // Confirm the caller is an admin.
-  const { data: callerProfile } = await supabase
+  const { data: callerProfile, error: profileErr } = await supabase
     .from("profiles")
     .select("role")
     .eq("id", user.id)
     .single();
+
+  if (profileErr) {
+    return NextResponse.json({ error: "Failed to verify caller permissions" }, { status: 500 });
+  }
 
   if (callerProfile?.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

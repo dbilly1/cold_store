@@ -55,15 +55,22 @@ export default function RegisterPage() {
       password: form.password,
     });
 
-    if (signInData.user) {
-      await supabase
-        .from("profiles")
-        .update({ role: form.role })
-        .eq("id", signInData.user.id);
-      await supabase.auth.signOut();
-    }
+    try {
+      if (signInData.user) {
+        const { error: roleError } = await supabase
+          .from("profiles")
+          .update({ role: form.role })
+          .eq("id", signInData.user.id);
+        if (roleError) {
+          toast({ title: "Warning: role could not be set", description: roleError.message, variant: "destructive" });
+        }
+        await supabase.auth.signOut();
+      }
 
-    router.push("/pending-approval");
+      router.push("/pending-approval");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (

@@ -73,7 +73,7 @@ export function UsersClient({ users: initial }: { users: Profile[] }) {
     setDeleting(false);
   }
 
-  const isAdmin = currentUser?.role === "admin";
+  const isAdmin = currentUser !== null && currentUser.role === "admin";
   const pending = users.filter(u => !u.is_approved);
   const approved = users.filter(u => u.is_approved);
 

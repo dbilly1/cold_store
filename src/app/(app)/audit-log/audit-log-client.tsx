@@ -127,7 +127,7 @@ export function AuditLogClient({ groups }: Props) {
                           {log.entity_type?.replace(/_/g, " ") ?? "—"}
                         </td>
                         <td className="px-4 py-2.5 text-xs text-slate-500 max-w-xs truncate">
-                          {log.new_value ? JSON.stringify(log.new_value) : "—"}
+                          {log.new_value ? (() => { try { return JSON.stringify(log.new_value); } catch { return "[unserializable]"; } })() : "—"}
                         </td>
                       </tr>
                     ))}

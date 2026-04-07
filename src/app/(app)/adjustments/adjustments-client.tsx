@@ -26,6 +26,7 @@ interface Adjustment {
   quantity_kg_delta: number; quantity_units_delta: number; quantity_boxes_delta: number;
   stock_before_kg: number; stock_before_units: number;
   approval_status: string; requires_approval: boolean; created_at: string;
+  adjusted_by: string;
   product: { name: string; unit_type: string } | null;
   adjusted_by_profile: { full_name: string } | null;
   approved_by_profile: { full_name: string } | null;
@@ -55,6 +56,7 @@ export function AdjustmentsClient({
   const product = products.find((p) => p.id === form.product_id);
 
   async function handleSubmit() {
+    if (!profile) { toast({ title: "Profile not loaded", variant: "destructive" }); return; }
     if (!product) { toast({ title: "Select a product", variant: "destructive" }); return; }
     if (!form.reason_detail.trim()) { toast({ title: "Reason detail required", variant: "destructive" }); return; }
 
@@ -74,7 +76,7 @@ export function AdjustmentsClient({
       .from("stock_adjustments")
       .insert({
         product_id: product.id,
-        adjusted_by: profile!.id,
+        adjusted_by: profile?.id ?? "",
         reason: form.reason,
         reason_detail: form.reason_detail,
         quantity_kg_delta: qKg,
@@ -103,15 +105,16 @@ export function AdjustmentsClient({
         variant: requiresApproval ? "default" : "success" as never,
       });
       if (requiresApproval) {
-        await supabase.from("alerts").insert({
+        const { error: alertErr } = await supabase.from("alerts").insert({
           alert_type: "excessive_adjustments", severity: "medium",
           title: "Stock Adjustment Requires Approval",
           message: `Adjustment of ${product.name} exceeds ${product.variance_threshold_pct}% variance threshold.`,
           related_entity_type: "stock_adjustments", related_entity_id: data.id,
         });
+        if (alertErr) console.warn("Alert insert failed:", alertErr.message);
       }
       await supabase.from("audit_logs").insert({
-        user_id: profile!.id, action: "CREATE_ADJUSTMENT", entity_type: "stock_adjustments",
+        user_id: profile?.id ?? "", action: "CREATE_ADJUSTMENT", entity_type: "stock_adjustments",
         entity_id: data.id, new_value: { product: product.name, qKg, qUnits, reason: form.reason },
       });
     }
@@ -122,10 +125,19 @@ export function AdjustmentsClient({
   }
 
   async function handleApprove(id: string, approved: boolean) {
+    const adjustment = adjustments.find((a) => a.id === id);
+    if (approved && adjustment && profile?.id === adjustment.adjusted_by) {
+      toast({
+        title: "Self-approval not permitted",
+        description: "You cannot approve an adjustment you submitted.",
+        variant: "destructive",
+      });
+      return;
+    }
     const supabase = createClient();
     const { error } = await supabase
       .from("stock_adjustments")
-      .update({ approval_status: approved ? "approved" : "rejected", approved_by: profile!.id, approved_at: new Date().toISOString() })
+      .update({ approval_status: approved ? "approved" : "rejected", approved_by: profile?.id ?? "", approved_at: new Date().toISOString() })
       .eq("id", id);
 
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }

@@ -45,18 +45,20 @@ export function AlertsClient({ alerts: initial }: { alerts: Alert[] }) {
 
   async function acknowledge(id: string) {
     const supabase = createClient();
-    await supabase.from("alerts").update({
+    const { error } = await supabase.from("alerts").update({
       status: "acknowledged",
       acknowledged_by: profile!.id,
       acknowledged_at: new Date().toISOString(),
     }).eq("id", id);
+    if (error) { toast({ title: "Failed to acknowledge alert", description: error.message, variant: "destructive" }); return; }
     setAlerts(alerts.map(a => a.id === id ? { ...a, status: "acknowledged" } : a));
     toast({ title: "Alert acknowledged" });
   }
 
   async function resolve(id: string) {
     const supabase = createClient();
-    await supabase.from("alerts").update({ status: "resolved" }).eq("id", id);
+    const { error } = await supabase.from("alerts").update({ status: "resolved" }).eq("id", id);
+    if (error) { toast({ title: "Failed to resolve alert", description: error.message, variant: "destructive" }); return; }
     setAlerts(alerts.map(a => a.id === id ? { ...a, status: "resolved" } : a));
     toast({ title: "Alert resolved" });
   }

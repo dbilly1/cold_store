@@ -25,15 +25,24 @@ import { format, subDays, eachDayOfInterval, parseISO } from "date-fns";
 import {
   TrendingUp,
   TrendingDown,
-  DollarSign,
   BarChart3,
   CreditCard,
-  AlertTriangle,
-  CheckCircle,
   Info,
+  Banknote,
+  Smartphone,
+  ArrowDownCircle,
+  ArrowUpCircle,
+  CircleDollarSign,
 } from "lucide-react";
 
-const PIE_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
+const PIE_COLORS = [
+  "#3b82f6",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#ec4899",
+];
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -118,33 +127,41 @@ export function ReportsClient({
 
   // ── Filtered datasets ──────────────────────────────────────────────────────
   const filteredSales = useMemo(
-    () => salesData.filter((s) => s.sale_date >= dateFrom && s.sale_date <= dateTo),
+    () =>
+      salesData.filter((s) => s.sale_date >= dateFrom && s.sale_date <= dateTo),
     [salesData, dateFrom, dateTo],
   );
 
   const filteredExpenses = useMemo(
-    () => expenseData.filter((e) => e.expense_date >= dateFrom && e.expense_date <= dateTo),
+    () =>
+      expenseData.filter(
+        (e) => e.expense_date >= dateFrom && e.expense_date <= dateTo,
+      ),
     [expenseData, dateFrom, dateTo],
   );
 
   const filteredRecons = useMemo(
     () =>
       reconData.filter(
-        (r) => r.reconciliation_date >= dateFrom && r.reconciliation_date <= dateTo,
+        (r) =>
+          r.reconciliation_date >= dateFrom && r.reconciliation_date <= dateTo,
       ),
     [reconData, dateFrom, dateTo],
   );
 
   // ── KPIs ───────────────────────────────────────────────────────────────────
 
-  // Revenue split
-  const collectedRevenue = filteredSales
-    .filter((s) => s.payment_method !== "credit")
+  // Revenue split by payment method
+  const cashRevenue = filteredSales
+    .filter((s) => s.payment_method === "cash")
+    .reduce((s, sale) => s + sale.total_amount, 0);
+  const mobileRevenue = filteredSales
+    .filter((s) => s.payment_method === "mobile_money")
     .reduce((s, sale) => s + sale.total_amount, 0);
   const creditRevenue = filteredSales
     .filter((s) => s.payment_method === "credit")
     .reduce((s, sale) => s + sale.total_amount, 0);
-  const totalRevenue = collectedRevenue + creditRevenue;
+  const totalRevenue = cashRevenue + mobileRevenue + creditRevenue;
 
   // COGS (fixed — includes boxes)
   const totalCOGS = filteredSales
@@ -156,11 +173,27 @@ export function ReportsClient({
   const netProfit = grossProfit - totalExpenses;
   const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
 
-  // Outstanding credit (all-time within data window — balance sheet figure)
+  // Credit position
+  // — Period: credit sales issued and repayments received within selected date range
+  const filteredCreditPayments = useMemo(
+    () =>
+      creditPaymentsData.filter(
+        (p) => p.payment_date >= dateFrom && p.payment_date <= dateTo,
+      ),
+    [creditPaymentsData, dateFrom, dateTo],
+  );
+  const periodCreditPaid = filteredCreditPayments.reduce(
+    (s, p) => s + p.amount,
+    0,
+  );
+  // — All-time balance (runs against the full 1-year data window as a balance sheet figure)
   const allTimeCreditSales = salesData
     .filter((s) => s.payment_method === "credit")
     .reduce((s, sale) => s + sale.total_amount, 0);
-  const allTimeCreditPaid = creditPaymentsData.reduce((s, p) => s + p.amount, 0);
+  const allTimeCreditPaid = creditPaymentsData.reduce(
+    (s, p) => s + p.amount,
+    0,
+  );
   const creditOutstanding = allTimeCreditSales - allTimeCreditPaid;
 
   // Reconciliation summary
@@ -172,21 +205,30 @@ export function ReportsClient({
     (s, r) => s + (r.mobile_variance || 0),
     0,
   );
-  const flaggedCount = filteredRecons.filter((r) => r.status === "flagged").length;
-  const balancedCount = filteredRecons.filter((r) => r.status === "balanced").length;
+  const flaggedCount = filteredRecons.filter(
+    (r) => r.status === "flagged",
+  ).length;
+  const balancedCount = filteredRecons.filter(
+    (r) => r.status === "balanced",
+  ).length;
 
   // ── Daily chart data ───────────────────────────────────────────────────────
   const dailyData = useMemo(() => {
     let days: Date[] = [];
     try {
-      days = eachDayOfInterval({ start: parseISO(dateFrom), end: parseISO(dateTo) });
+      days = eachDayOfInterval({
+        start: parseISO(dateFrom),
+        end: parseISO(dateTo),
+      });
     } catch {
       return [];
     }
     return days.map((day) => {
       const dateStr = format(day, "yyyy-MM-dd");
       const daySales = filteredSales.filter((s) => s.sale_date === dateStr);
-      const dayExpenses = filteredExpenses.filter((e) => e.expense_date === dateStr);
+      const dayExpenses = filteredExpenses.filter(
+        (e) => e.expense_date === dateStr,
+      );
       const revenue = daySales.reduce((s, sale) => s + sale.total_amount, 0);
       const cash = daySales
         .filter((s) => s.payment_method === "cash")
@@ -217,7 +259,9 @@ export function ReportsClient({
   // ── Product profitability ──────────────────────────────────────────────────
   const filteredProductSales = useMemo(() => {
     return productSalesData.filter((ps) => {
-      const s = ps as unknown as { sale: { sale_date: string; payment_method: string } };
+      const s = ps as unknown as {
+        sale: { sale_date: string; payment_method: string };
+      };
       return s.sale?.sale_date >= dateFrom && s.sale?.sale_date <= dateTo;
     });
   }, [productSalesData, dateFrom, dateTo]);
@@ -231,7 +275,12 @@ export function ReportsClient({
       const p = item.product as { name: string; unit_type: string } | null;
       if (!p) return;
       if (!byProduct[item.product_id])
-        byProduct[item.product_id] = { name: p.name, revenue: 0, cogs: 0, qty: 0 };
+        byProduct[item.product_id] = {
+          name: p.name,
+          revenue: 0,
+          cogs: 0,
+          qty: 0,
+        };
       byProduct[item.product_id].revenue += item.line_total;
       byProduct[item.product_id].cogs += itemCOGS(item);
       byProduct[item.product_id].qty +=
@@ -263,7 +312,6 @@ export function ReportsClient({
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
-
       {/* Date range picker */}
       <div className="flex items-center gap-3 bg-white border rounded-lg p-3 flex-wrap">
         <BarChart3 className="h-4 w-4 text-blue-500 flex-shrink-0" />
@@ -284,74 +332,174 @@ export function ReportsClient({
         {beyondWindow && (
           <span className="flex items-center gap-1.5 text-xs text-amber-600 ml-2">
             <Info className="h-3.5 w-3.5" />
-            Data only available from {formatDate(dataStartDate)} — results may be incomplete
+            Data only available from {formatDate(dataStartDate)} — results may
+            be incomplete
           </span>
         )}
       </div>
 
-      {/* KPI Row — 6 cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-        {/* Total Revenue */}
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Total Revenue</p>
-            <p className="text-xl font-bold text-blue-600">{formatCurrency(totalRevenue)}</p>
-            <p className="text-xs text-muted-foreground mt-1">incl. credit sales</p>
-          </CardContent>
-        </Card>
+      {/* ── KPI Section: 75 / 25 split ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[3fr_1fr] gap-4 lg:items-stretch">
+        {/* Left 75% — Revenue Breakdown + Profitability stacked */}
+        <div className="space-y-4">
+          {/* Row 1 — Revenue Breakdown */}
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <CircleDollarSign className="h-4 w-4 text-blue-400" />
+                  <p className="text-xs text-muted-foreground">Total Revenue</p>
+                </div>
+                <p className="text-xl font-bold text-blue-600">
+                  {formatCurrency(totalRevenue)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  all payment methods
+                </p>
+              </CardContent>
+            </Card>
 
-        {/* Cash Collected */}
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Cash Collected</p>
-            <p className="text-xl font-bold text-green-600">{formatCurrency(collectedRevenue)}</p>
-            <p className="text-xs text-muted-foreground mt-1">cash + mobile only</p>
-          </CardContent>
-        </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <Banknote className="h-4 w-4 text-green-400" />
+                  <p className="text-xs text-muted-foreground">Cash Sales</p>
+                </div>
+                <p className="text-xl font-bold text-green-600">
+                  {formatCurrency(cashRevenue)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {totalRevenue > 0
+                    ? ((cashRevenue / totalRevenue) * 100).toFixed(0)
+                    : 0}
+                  % of revenue
+                </p>
+              </CardContent>
+            </Card>
 
-        {/* Credit Sales */}
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Credit Sales</p>
-            <p className="text-xl font-bold text-purple-600">{formatCurrency(creditRevenue)}</p>
-            <p className="text-xs text-amber-600 mt-1 font-medium">
-              {formatCurrency(creditOutstanding)} outstanding
-            </p>
-          </CardContent>
-        </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <Smartphone className="h-4 w-4 text-sky-400" />
+                  <p className="text-xs text-muted-foreground">Mobile Money</p>
+                </div>
+                <p className="text-xl font-bold text-sky-600">
+                  {formatCurrency(mobileRevenue)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {totalRevenue > 0
+                    ? ((mobileRevenue / totalRevenue) * 100).toFixed(0)
+                    : 0}
+                  % of revenue
+                </p>
+              </CardContent>
+            </Card>
 
-        {/* Gross Profit + Margin */}
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Gross Profit</p>
-            <p className={`text-xl font-bold ${grossProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
-              {formatCurrency(grossProfit)}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">{grossMargin.toFixed(1)}% margin</p>
-          </CardContent>
-        </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <CreditCard className="h-4 w-4 text-purple-400" />
+                  <p className="text-xs text-muted-foreground">Credit Sales</p>
+                </div>
+                <p className="text-xl font-bold text-purple-600">
+                  {formatCurrency(creditRevenue)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {totalRevenue > 0
+                    ? ((creditRevenue / totalRevenue) * 100).toFixed(0)
+                    : 0}
+                  % of revenue
+                </p>
+              </CardContent>
+            </Card>
+          </div>
 
-        {/* Expenses */}
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Expenses</p>
-            <p className="text-xl font-bold text-amber-600">{formatCurrency(totalExpenses)}</p>
-            <p className="text-xs text-muted-foreground mt-1">operating costs</p>
-          </CardContent>
-        </Card>
+          {/* Row 2 — Profitability */}
+          <div className="grid grid-cols-3 gap-3">
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-xs text-muted-foreground">Gross Profit</p>
+                <p
+                  className={`text-xl font-bold ${grossProfit >= 0 ? "text-green-600" : "text-red-600"}`}
+                >
+                  {formatCurrency(grossProfit)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {grossMargin.toFixed(1)}% margin
+                </p>
+              </CardContent>
+            </Card>
 
-        {/* Net Profit */}
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Net Profit</p>
-            <p className={`text-xl font-bold ${netProfit >= 0 ? "text-green-700" : "text-red-700"}`}>
-              {formatCurrency(netProfit)}
-            </p>
-            {netProfit >= 0 ? (
-              <TrendingUp className="h-3 w-3 text-green-500 mt-1" />
-            ) : (
-              <TrendingDown className="h-3 w-3 text-red-500 mt-1" />
-            )}
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-xs text-muted-foreground">Expenses</p>
+                <p className="text-xl font-bold text-amber-600">
+                  {formatCurrency(totalExpenses)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  operating costs
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-xs text-muted-foreground">Net Profit</p>
+                <p
+                  className={`text-xl font-bold ${netProfit >= 0 ? "text-green-700" : "text-red-700"}`}
+                >
+                  {formatCurrency(netProfit)}
+                </p>
+                <div className="mt-1">
+                  {netProfit >= 0 ? (
+                    <TrendingUp className="h-3 w-3 text-green-500" />
+                  ) : (
+                    <TrendingDown className="h-3 w-3 text-red-500" />
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+
+        {/* Right 25% — Credit Position */}
+        <Card className="flex flex-col">
+          <CardContent className="flex flex-col flex-1 justify-around space-y-2 px-6 py-4">
+            {/* Repayments Received */}
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                <ArrowDownCircle className="h-3.5 w-3.5 text-green-400" />
+                <p className="text-xs text-muted-foreground">
+                  Repayments Received
+                </p>
+              </div>
+              <p className="text-xl font-bold text-green-600">
+                {formatCurrency(periodCreditPaid)}
+              </p>
+              <p className="text-xs text-slate-400">
+                payments collected this period
+              </p>
+            </div>
+
+            <div className="border-t" />
+
+            {/* Outstanding Balance */}
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                <CircleDollarSign className="h-3.5 w-3.5 text-amber-400" />
+                <p className="text-xs text-muted-foreground">
+                  Outstanding Balance
+                </p>
+              </div>
+              <p
+                className={`text-xl font-bold ${creditOutstanding > 0 ? "text-amber-600" : "text-green-600"}`}
+              >
+                {formatCurrency(Math.max(0, creditOutstanding))}
+              </p>
+              <p className="text-xs text-slate-400">
+                total unpaid across all customers
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -443,11 +591,15 @@ export function ReportsClient({
                       <span className="flex items-center gap-1">
                         <span
                           className="h-2 w-2 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }}
+                          style={{
+                            backgroundColor: PIE_COLORS[i % PIE_COLORS.length],
+                          }}
                         />
                         <span className="capitalize">{cat.name}</span>
                       </span>
-                      <span className="font-semibold">{formatCurrency(cat.value)}</span>
+                      <span className="font-semibold">
+                        {formatCurrency(cat.value)}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -482,9 +634,27 @@ export function ReportsClient({
                   contentStyle={{ borderRadius: "8px" }}
                 />
                 <Legend />
-                <Bar dataKey="cash" stackId="a" fill="#10b981" name="Cash" radius={[0, 0, 0, 0]} />
-                <Bar dataKey="mobile" stackId="a" fill="#3b82f6" name="Mobile Money" radius={[0, 0, 0, 0]} />
-                <Bar dataKey="credit" stackId="a" fill="#8b5cf6" name="Credit" radius={[4, 4, 0, 0]} />
+                <Bar
+                  dataKey="cash"
+                  stackId="a"
+                  fill="#10b981"
+                  name="Cash"
+                  radius={[0, 0, 0, 0]}
+                />
+                <Bar
+                  dataKey="mobile"
+                  stackId="a"
+                  fill="#3b82f6"
+                  name="Mobile Money"
+                  radius={[0, 0, 0, 0]}
+                />
+                <Bar
+                  dataKey="credit"
+                  stackId="a"
+                  fill="#8b5cf6"
+                  name="Credit"
+                  radius={[4, 4, 0, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -505,11 +675,15 @@ export function ReportsClient({
                 {/* Session counts */}
                 <div className="flex gap-3">
                   <div className="flex-1 bg-green-50 rounded-lg p-3 text-center">
-                    <p className="text-lg font-bold text-green-600">{balancedCount}</p>
+                    <p className="text-lg font-bold text-green-600">
+                      {balancedCount}
+                    </p>
                     <p className="text-xs text-green-700">Balanced</p>
                   </div>
                   <div className="flex-1 bg-red-50 rounded-lg p-3 text-center">
-                    <p className="text-lg font-bold text-red-600">{flaggedCount}</p>
+                    <p className="text-lg font-bold text-red-600">
+                      {flaggedCount}
+                    </p>
                     <p className="text-xs text-red-700">Flagged</p>
                   </div>
                 </div>
@@ -523,8 +697,8 @@ export function ReportsClient({
                         totalCashVariance > 0
                           ? "text-amber-600"
                           : totalCashVariance < 0
-                          ? "text-red-600"
-                          : "text-green-600"
+                            ? "text-red-600"
+                            : "text-green-600"
                       }`}
                     >
                       {totalCashVariance >= 0 ? "+" : ""}
@@ -538,8 +712,8 @@ export function ReportsClient({
                         totalMobileVariance > 0
                           ? "text-amber-600"
                           : totalMobileVariance < 0
-                          ? "text-red-600"
-                          : "text-green-600"
+                            ? "text-red-600"
+                            : "text-green-600"
                       }`}
                     >
                       {totalMobileVariance >= 0 ? "+" : ""}
@@ -547,14 +721,16 @@ export function ReportsClient({
                     </span>
                   </div>
                   <div className="flex justify-between items-center border-t pt-2">
-                    <span className="text-slate-700 font-medium">Net variance</span>
+                    <span className="text-slate-700 font-medium">
+                      Net variance
+                    </span>
                     <span
                       className={`font-bold ${
                         totalCashVariance + totalMobileVariance > 0
                           ? "text-amber-600"
                           : totalCashVariance + totalMobileVariance < 0
-                          ? "text-red-600"
-                          : "text-green-600"
+                            ? "text-red-600"
+                            : "text-green-600"
                       }`}
                     >
                       {totalCashVariance + totalMobileVariance >= 0 ? "+" : ""}
@@ -582,20 +758,36 @@ export function ReportsClient({
             <table className="w-full text-sm">
               <thead className="border-b">
                 <tr>
-                  <th className="text-left py-2 text-slate-500 font-medium">Product</th>
-                  <th className="text-right py-2 text-slate-500 font-medium">Revenue</th>
-                  <th className="text-right py-2 text-slate-500 font-medium">COGS</th>
-                  <th className="text-right py-2 text-slate-500 font-medium">Gross Profit</th>
-                  <th className="text-right py-2 text-slate-500 font-medium">Margin %</th>
-                  <th className="text-right py-2 text-slate-500 font-medium">Qty Sold</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">
+                    Product
+                  </th>
+                  <th className="text-right py-2 text-slate-500 font-medium">
+                    Revenue
+                  </th>
+                  <th className="text-right py-2 text-slate-500 font-medium">
+                    COGS
+                  </th>
+                  <th className="text-right py-2 text-slate-500 font-medium">
+                    Gross Profit
+                  </th>
+                  <th className="text-right py-2 text-slate-500 font-medium">
+                    Margin %
+                  </th>
+                  <th className="text-right py-2 text-slate-500 font-medium">
+                    Qty Sold
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {productProfitability.map((p) => (
                   <tr key={p.name} className="hover:bg-slate-50">
                     <td className="py-2 font-medium">{p.name}</td>
-                    <td className="py-2 text-right">{formatCurrency(p.revenue)}</td>
-                    <td className="py-2 text-right text-slate-500">{formatCurrency(p.cogs)}</td>
+                    <td className="py-2 text-right">
+                      {formatCurrency(p.revenue)}
+                    </td>
+                    <td className="py-2 text-right text-slate-500">
+                      {formatCurrency(p.cogs)}
+                    </td>
                     <td
                       className={`py-2 text-right font-semibold ${
                         p.profit >= 0 ? "text-green-600" : "text-red-600"
@@ -608,8 +800,8 @@ export function ReportsClient({
                         p.margin >= 20
                           ? "text-green-600"
                           : p.margin >= 10
-                          ? "text-amber-600"
-                          : "text-red-600"
+                            ? "text-amber-600"
+                            : "text-red-600"
                       }`}
                     >
                       {p.margin.toFixed(1)}%
@@ -634,7 +826,9 @@ export function ReportsClient({
                 <tfoot className="border-t font-semibold">
                   <tr>
                     <td className="py-2">Total</td>
-                    <td className="py-2 text-right">{formatCurrency(totalRevenue)}</td>
+                    <td className="py-2 text-right">
+                      {formatCurrency(totalRevenue)}
+                    </td>
                     <td className="py-2 text-right text-slate-500">
                       {formatCurrency(totalCOGS)}
                     </td>
@@ -645,7 +839,9 @@ export function ReportsClient({
                     >
                       {formatCurrency(grossProfit)}
                     </td>
-                    <td className="py-2 text-right">{grossMargin.toFixed(1)}%</td>
+                    <td className="py-2 text-right">
+                      {grossMargin.toFixed(1)}%
+                    </td>
                     <td />
                   </tr>
                 </tfoot>

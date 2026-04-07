@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { MobileShell } from "@/components/layout/mobile-shell";
-import { SyncBanner } from "@/components/offline/sync-banner";
 import { SessionTimeout } from "@/components/auth/session-timeout";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -20,7 +19,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <MobileShell>
-      <SyncBanner />
       <SessionTimeout />
       {children}
     </MobileShell>

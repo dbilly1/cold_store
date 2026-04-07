@@ -25,8 +25,7 @@ function TimeoutBanner() {
         variant: "destructive",
       });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [timedOut, toast]);
 
   if (!timedOut) return null;
 
@@ -71,6 +70,7 @@ export default function LoginPage() {
       return;
     }
 
+    setLoading(false);
     router.push("/dashboard");
     router.refresh();
   }

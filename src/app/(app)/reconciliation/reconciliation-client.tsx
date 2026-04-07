@@ -188,7 +188,7 @@ export function ReconciliationClient({
     }
 
     if (status === "flagged") {
-      await supabase.from("alerts").insert({
+      const { error: alertErr } = await supabase.from("alerts").insert({
         alert_type: "cash_mismatch",
         severity: "high",
         title: "Cash Reconciliation Mismatch",
@@ -196,6 +196,7 @@ export function ReconciliationClient({
         related_entity_type: "daily_reconciliations",
         related_entity_id: data.id,
       });
+      if (alertErr) console.warn("Reconciliation alert insert failed:", alertErr.message);
     }
 
     await supabase.from("audit_logs").insert({

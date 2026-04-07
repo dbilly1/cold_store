@@ -29,12 +29,12 @@ export default async function DashboardPage() {
 
   // ── Queries ──────────────────────────────────
   const [
-    { data: todaySales },
-    { data: weekSales },
-    { data: todayExpenses },
-    { count: openAlertsCount },
-    { data: allActiveProducts },
-    { count: pendingAdjustments },
+    { data: todaySales, error: todaySalesErr },
+    { data: weekSales, error: weekSalesErr },
+    { data: todayExpenses, error: todayExpensesErr },
+    { count: openAlertsCount, error: alertsErr },
+    { data: allActiveProducts, error: productsErr },
+    { count: pendingAdjustments, error: adjustmentsErr },
   ] = await Promise.all([
     // Single query used for both KPIs and the sales table
     supabase
@@ -65,7 +65,8 @@ export default async function DashboardPage() {
     supabase
       .from("alerts")
       .select("*", { count: "exact", head: true })
-      .eq("status", "open"),
+      .eq("status", "open")
+      .gte("created_at", format(subDays(new Date(), 30), "yyyy-MM-dd")),
 
     // Fetch all products — filter low stock in JS per unit_type
     supabase
@@ -78,6 +79,14 @@ export default async function DashboardPage() {
       .select("*", { count: "exact", head: true })
       .eq("approval_status", "pending"),
   ]);
+
+  // Log any query errors
+  if (todaySalesErr)    console.error("Dashboard todaySales error:", todaySalesErr.message);
+  if (weekSalesErr)     console.error("Dashboard weekSales error:", weekSalesErr.message);
+  if (todayExpensesErr) console.error("Dashboard todayExpenses error:", todayExpensesErr.message);
+  if (alertsErr)        console.error("Dashboard alerts error:", alertsErr.message);
+  if (productsErr)      console.error("Dashboard products error:", productsErr.message);
+  if (adjustmentsErr)   console.error("Dashboard adjustments error:", adjustmentsErr.message);
 
   // Low stock: compare the right column per unit_type
   const lowStockProducts = (allActiveProducts ?? [])

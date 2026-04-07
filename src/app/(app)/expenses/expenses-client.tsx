@@ -99,10 +99,11 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); }
     else {
       setExpenses([data as Expense, ...expenses]);
-      await supabase.from("audit_logs").insert({
+      const { error: auditErr } = await supabase.from("audit_logs").insert({
         user_id: profile!.id, action: "CREATE_EXPENSE", entity_type: "expenses", entity_id: data.id,
         new_value: { category: form.category, amount, description: form.description, paid_from_till: form.paid_from_till },
       });
+      if (auditErr) console.warn("Audit log insert failed:", auditErr.message);
       toast({ title: "Expense recorded" });
       setDialog(false);
       setForm({ expense_date: format(new Date(), "yyyy-MM-dd"), category: "electricity", description: "", amount: "", paid_from_till: false });
@@ -146,11 +147,12 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
       setExpenses(expenses.map((e) =>
         e.id === editId ? { ...e, ...editForm, amount } : e
       ));
-      await supabase.from("audit_logs").insert({
+      const { error: auditErr2 } = await supabase.from("audit_logs").insert({
         user_id: profile!.id, action: "UPDATE_EXPENSE", entity_type: "expenses", entity_id: editId,
         previous_value: prev ? { category: prev.category, amount: prev.amount, description: prev.description } : null,
         new_value: { category: editForm.category, amount, description: editForm.description, paid_from_till: editForm.paid_from_till },
       });
+      if (auditErr2) console.warn("Audit log insert failed:", auditErr2.message);
       toast({ title: "Expense updated" });
       setEditDialog(false);
     }

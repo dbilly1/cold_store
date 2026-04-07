@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/layout/top-bar";
 import { AdjustmentsClient } from "./adjustments-client";
 
-export const revalidate = 60; // refresh every 60 seconds
+export const dynamic = "force-dynamic";
 
 export default async function AdjustmentsPage() {
   const supabase = await createClient();
@@ -14,6 +14,7 @@ export default async function AdjustmentsPage() {
     supabase.from("stock_adjustments").select(`
       id, reason, reason_detail, quantity_kg_delta, quantity_units_delta, quantity_boxes_delta,
       stock_before_kg, stock_before_units, approval_status, requires_approval, created_at,
+      adjusted_by,
       product:products(name, unit_type),
       adjusted_by_profile:profiles!stock_adjustments_adjusted_by_fkey(full_name),
       approved_by_profile:profiles!stock_adjustments_approved_by_fkey(full_name)

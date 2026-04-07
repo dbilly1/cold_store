@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { formatCurrency } from "@/lib/utils";
-import { Plus, Package, TrendingUp, Edit, PlusCircle, Search, Truck, Trash2 } from "lucide-react";
+import { Plus, Package, TrendingUp, Edit, PlusCircle, Search, Truck, Trash2, ArrowUpDown } from "lucide-react";
 import type { UnitType } from "@/types/database";
 
 interface Category { id: string; name: string; }
@@ -68,6 +68,22 @@ function emptyBulkRow(): BulkRestockRow {
   };
 }
 
+type SortOption =
+  | "name-asc"
+  | "name-desc"
+  | "stock-asc"
+  | "stock-desc"
+  | "low-stock-first"
+  | "value-desc"
+  | "category";
+
+/** Returns the numeric stock quantity used for sorting */
+function stockQty(p: Product): number {
+  if (p.unit_type === "kg")    return p.current_stock_kg;
+  if (p.unit_type === "units") return p.current_stock_units;
+  return p.current_stock_boxes;
+}
+
 /** Returns the primary stock label and value for a product */
 function stockDisplay(p: Product) {
   if (p.unit_type === "kg") return `${Number(p.current_stock_kg).toFixed(3)} kg`;
@@ -86,6 +102,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
   const { profile } = useProfile();
   const [products, setProducts] = useState<Product[]>(initial);
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<SortOption>("name-asc");
   const [productForm, setProductForm] = useState(emptyProduct);
   const [restockForm, setRestockForm] = useState(emptyRestock);
   const [productDialog, setProductDialog] = useState(false);
@@ -98,10 +115,40 @@ export function InventoryClient({ products: initial, categories }: { products: P
 
   const canEdit = profile?.role === "admin" || profile?.role === "supervisor";
 
-  const filtered = products.filter((p) =>
-    p.name.toLowerCase().includes(search.toLowerCase()) ||
-    p.category?.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = products
+    .filter((p) =>
+      p.name.toLowerCase().includes(search.toLowerCase()) ||
+      (p.category?.name ?? "").toLowerCase().includes(search.toLowerCase()),
+    )
+    .sort((a, b) => {
+      switch (sortBy) {
+        case "name-asc":
+          return a.name.localeCompare(b.name);
+        case "name-desc":
+          return b.name.localeCompare(a.name);
+        case "stock-asc":
+          return stockQty(a) - stockQty(b);
+        case "stock-desc":
+          return stockQty(b) - stockQty(a);
+        case "low-stock-first": {
+          const aLow = isLowStock(a) ? 0 : 1;
+          const bLow = isLowStock(b) ? 0 : 1;
+          return aLow !== bLow ? aLow - bLow : stockQty(a) - stockQty(b);
+        }
+        case "value-desc": {
+          const aVal = stockQty(a) * a.weighted_avg_cost;
+          const bVal = stockQty(b) * b.weighted_avg_cost;
+          return bVal - aVal;
+        }
+        case "category": {
+          const aCat = a.category?.name ?? "zzz";
+          const bCat = b.category?.name ?? "zzz";
+          return aCat.localeCompare(bCat) || a.name.localeCompare(b.name);
+        }
+        default:
+          return 0;
+      }
+    });
 
   // ---------- Save Product ----------
   async function handleSaveProduct() {
@@ -137,7 +184,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
         .from("products")
         .update(payload)
         .eq("id", editProduct.id)
-        .select(`*, category:categories(id, name)`)
+        .select(`id, name, unit_type, units_per_box, current_stock_kg, current_stock_units, current_stock_boxes, weighted_avg_cost, selling_price, low_stock_threshold, variance_threshold_pct, is_active, created_at, category:categories(id, name)`)
         .single();
 
       if (error) {
@@ -154,7 +201,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
       const { data, error } = await supabase
         .from("products")
         .insert({ ...payload, current_stock_kg: 0, current_stock_units: 0, current_stock_boxes: 0, weighted_avg_cost: 0 })
-        .select(`*, category:categories(id, name)`)
+        .select(`id, name, unit_type, units_per_box, current_stock_kg, current_stock_units, current_stock_boxes, weighted_avg_cost, selling_price, low_stock_threshold, variance_threshold_pct, is_active, created_at, category:categories(id, name)`)
         .single();
 
       if (error) {
@@ -186,11 +233,18 @@ export function InventoryClient({ products: initial, categories }: { products: P
 
         const { error: stockError } = await supabase.from("stock_additions").insert(stockEntry);
         if (stockError) {
-          toast({ title: "Product created but opening stock failed", description: stockError.message, variant: "destructive" });
+          toast({ title: "Product created but opening stock failed — rolling back", description: stockError.message, variant: "destructive" });
+          // Rollback: delete the newly created product so state stays consistent
+          await supabase.from("products").delete().eq("id", newProduct.id);
+          setProductDialog(false);
+          setEditProduct(null);
+          setProductForm(emptyProduct);
+          setSaving(false);
+          return;
         } else {
           // Re-fetch updated product with fresh stock values
           const { data: fresh } = await supabase
-            .from("products").select(`*, category:categories(id, name)`).eq("id", newProduct.id).single();
+            .from("products").select(`id, name, unit_type, units_per_box, current_stock_kg, current_stock_units, current_stock_boxes, weighted_avg_cost, selling_price, low_stock_threshold, variance_threshold_pct, is_active, created_at, category:categories(id, name)`).eq("id", newProduct.id).single();
           setProducts([...products, (fresh ?? newProduct) as unknown as Product]);
           await supabase.from("audit_logs").insert({
             user_id: profile!.id, action: "CREATE_PRODUCT",
@@ -262,7 +316,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
         entity_id: p.id,
         new_value: { quantity_primary: qPrimary, quantity_boxes: qBoxes, cost, unit_type: p.unit_type },
       });
-      const { data } = await supabase.from("products").select(`*, category:categories(id, name)`).order("name");
+      const { data } = await supabase.from("products").select(`id, name, unit_type, units_per_box, current_stock_kg, current_stock_units, current_stock_boxes, weighted_avg_cost, selling_price, low_stock_threshold, variance_threshold_pct, is_active, created_at, category:categories(id, name)`).order("name");
       if (data) setProducts(data as unknown as Product[]);
     }
 
@@ -322,7 +376,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
     } else {
       toast({ title: `${inserts.length} restock(s) saved successfully` });
       // Re-fetch all products
-      const { data } = await supabase.from("products").select(`*, category:categories(id, name)`).order("name");
+      const { data } = await supabase.from("products").select(`id, name, unit_type, units_per_box, current_stock_kg, current_stock_units, current_stock_boxes, weighted_avg_cost, selling_price, low_stock_threshold, variance_threshold_pct, is_active, created_at, category:categories(id, name)`).order("name");
       if (data) setProducts(data as unknown as Product[]);
       setBulkRestockDialog(false);
       setBulkRows([emptyBulkRow()]);
@@ -353,9 +407,9 @@ export function InventoryClient({ products: initial, categories }: { products: P
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3 flex-1 max-w-sm">
-          <div className="relative flex-1">
+      <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <div className="relative flex-1 max-w-xs">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <Input
               placeholder="Search products..."
@@ -364,6 +418,21 @@ export function InventoryClient({ products: initial, categories }: { products: P
               className="pl-9"
             />
           </div>
+          <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
+            <SelectTrigger className="w-44 h-9 text-sm gap-1">
+              <ArrowUpDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="name-asc">Name: A → Z</SelectItem>
+              <SelectItem value="name-desc">Name: Z → A</SelectItem>
+              <SelectItem value="stock-asc">Stock: Low → High</SelectItem>
+              <SelectItem value="stock-desc">Stock: High → Low</SelectItem>
+              <SelectItem value="low-stock-first">Low Stock First</SelectItem>
+              <SelectItem value="value-desc">Stock Value: High → Low</SelectItem>
+              <SelectItem value="category">By Category</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         {canEdit && (
           <div className="flex items-center gap-2">

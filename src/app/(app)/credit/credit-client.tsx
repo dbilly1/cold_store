@@ -168,13 +168,21 @@ export function CreditClient({
       return;
     }
 
-    await supabase.from("audit_logs").insert({
+    const { error: auditErr } = await supabase.from("audit_logs").insert({
       user_id: profile!.id,
       action: "RECORD_CREDIT_PAYMENT",
       entity_type: "credit_payments",
       entity_id: (data as { id: string }).id,
       new_value: { customer_id: paymentDialog.customerId, amount: amt },
     });
+    if (auditErr) {
+      console.warn("Audit log insert failed:", auditErr.message);
+      toast({
+        title: "Payment saved — audit log failed",
+        description: "The payment was recorded but the audit trail entry failed. Please notify your administrator.",
+        variant: "default",
+      });
+    }
 
     setPayments((prev) => [{ ...(data as unknown as CreditPayment), recorded_by_profile: null }, ...prev]);
     toast({ title: "Payment recorded" });
