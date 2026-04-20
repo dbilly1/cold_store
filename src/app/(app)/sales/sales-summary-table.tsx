@@ -4,6 +4,7 @@ import React from "react";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
+  ChevronLeft,
   ChevronRight,
   TrendingUp,
   TrendingDown,
@@ -15,19 +16,27 @@ interface SalesSummaryTableProps {
   summaries: DailySummary[];
   today: string;
   onRowClick: (date: string) => void;
+  page?: number;
+  hasMore?: boolean;
+  onOlderPage?: () => void;
+  onNewerPage?: () => void;
 }
 
 export function SalesSummaryTable({
   summaries,
   today,
   onRowClick,
+  page = 0,
+  hasMore = false,
+  onOlderPage,
+  onNewerPage,
 }: SalesSummaryTableProps) {
   return (
     <>
       <div className="flex items-center justify-between mb-4">
         <h2 className="font-semibold text-slate-700">All Sales</h2>
         <p className="text-xs text-muted-foreground">
-          Last 90 days · click a row to see transactions
+          {page === 0 ? "Last 30 days" : `Page ${page + 1}`} · click a row to see transactions
         </p>
       </div>
       {summaries.length === 0 ? (
@@ -123,6 +132,24 @@ export function SalesSummaryTable({
               })}
             </tbody>
           </table>
+          {/* Pagination */}
+          <div className="flex items-center justify-between px-3 py-2 border-t text-sm">
+            <button
+              disabled={page === 0}
+              onClick={onNewerPage}
+              className="flex items-center gap-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" /> Newer
+            </button>
+            <span className="text-xs text-slate-400">Page {page + 1}</span>
+            <button
+              disabled={!hasMore}
+              onClick={onOlderPage}
+              className="flex items-center gap-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            >
+              Older <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       )}
     </>

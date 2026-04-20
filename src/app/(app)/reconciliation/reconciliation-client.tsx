@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProfile } from "@/hooks/use-profile";
@@ -11,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
-import { CheckCircle, AlertTriangle, Calculator, ChevronRight, Layers, Receipt, Plus, Trash2 } from "lucide-react";
+import { CheckCircle, AlertTriangle, Calculator, ChevronLeft, ChevronRight, Layers, Receipt, Plus, Trash2, RefreshCw } from "lucide-react";
 import type { DaySessionData, SessionData } from "./page";
 import type { ExpenseCategory } from "@/types/database";
 
@@ -53,17 +54,37 @@ interface PendingExpense {
 
 export function ReconciliationClient({
   today,
+  defaultDate,
   days,
   reconciliations: initialRecons,
+  page,
+  hasMore,
 }: {
   today: string;
+  defaultDate: string;
   days: DaySessionData[];
   reconciliations: Reconciliation[];
+  page: number;
+  hasMore: boolean;
 }) {
   const { toast } = useToast();
   const { profile } = useProfile();
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [reconciliations, setReconciliations] = useState<Reconciliation[]>(initialRecons);
-  const [selectedDate, setSelectedDate] = useState(today);
+  const [selectedDate, setSelectedDate] = useState(defaultDate);
+
+  // Reset local state when page changes (pagination navigation)
+  useEffect(() => {
+    setSelectedDate(defaultDate);
+    setReconciliations(initialRecons);
+    setFormState({});
+    setPendingExpenses({});
+  }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleRefresh() {
+    startTransition(() => router.refresh());
+  }
   const [formState, setFormState] = useState<Record<string, FormEntry>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [pendingExpenses, setPendingExpenses] = useState<Record<string, PendingExpense[]>>({});
@@ -173,6 +194,8 @@ export function ReconciliationClient({
           system_mobile_total: session.system_mobile + session.credit_mobile,
           actual_cash_entered: cash,
           actual_mobile_entered: mobile,
+          cash_variance: cashV,
+          mobile_variance: mobileV,
           status,
           notes: form.notes || null,
         },
@@ -213,6 +236,9 @@ export function ReconciliationClient({
     ]);
     // Clear pending expenses for this session
     setPendingExpenses((prev) => ({ ...prev, [session.session_key]: [] }));
+
+    // Refresh server data so history and session totals are always current
+    startTransition(() => router.refresh());
 
     if (status === "balanced") {
       toast({ title: "Balanced!", variant: "success" as never });
@@ -275,6 +301,16 @@ export function ReconciliationClient({
                 onChange={(e) => setSelectedDate(e.target.value)}
                 className="h-8 text-sm w-full sm:w-36"
               />
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 w-8 p-0 flex-shrink-0"
+                onClick={handleRefresh}
+                disabled={isPending}
+                title="Refresh data"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isPending ? "animate-spin" : ""}`} />
+              </Button>
             </div>
           </div>
           {selectedDate !== today && (
@@ -559,8 +595,26 @@ export function ReconciliationClient({
               </tbody>
             </table>
             {sortedDates.length === 0 && (
-              <div className="text-center py-8 text-sm text-slate-400">No activity in the last 30 days</div>
+              <div className="text-center py-8 text-sm text-slate-400">No activity for this period</div>
             )}
+            {/* Pagination */}
+            <div className="flex items-center justify-between px-3 py-2 border-t text-sm">
+              <button
+                disabled={page === 0}
+                onClick={() => router.push(`?page=${page - 1}`)}
+                className="flex items-center gap-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+              >
+                <ChevronLeft className="h-4 w-4" /> Newer
+              </button>
+              <span className="text-xs text-slate-400">Page {page + 1}</span>
+              <button
+                disabled={!hasMore}
+                onClick={() => router.push(`?page=${page + 1}`)}
+                className="flex items-center gap-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+              >
+                Older <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         </div>
 

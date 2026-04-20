@@ -25,14 +25,16 @@ export default async function ReportsPage() {
       )
       .gte("sale_date", oneYearAgo)
       .eq("is_deleted", false)
-      .order("sale_date"),
+      .order("sale_date")
+      .limit(20000),
 
     // Expenses — all within data window, no stale cache
     supabase
       .from("expenses")
       .select("expense_date, amount, category")
       .gte("expense_date", oneYearAgo)
-      .order("expense_date"),
+      .order("expense_date")
+      .limit(5000),
 
     // Per-product sales with server-side date filter to avoid fetching all-time data
     supabase
@@ -43,20 +45,23 @@ export default async function ReportsPage() {
          sale:sales!inner(sale_date, is_deleted, payment_method)`,
       )
       .eq("sale.is_deleted" as never, false)
-      .gte("sale.sale_date" as never, oneYearAgo),
+      .gte("sale.sale_date" as never, oneYearAgo)
+      .limit(50000),
 
     // Credit repayments (for outstanding balance calc)
     supabase
       .from("credit_payments")
       .select("customer_id, amount, payment_method, payment_date")
-      .gte("payment_date", oneYearAgo),
+      .gte("payment_date", oneYearAgo)
+      .limit(5000),
 
     // Reconciliation sessions (for variance summary)
     supabase
       .from("daily_reconciliations")
       .select("reconciliation_date, cash_variance, mobile_variance, status")
       .gte("reconciliation_date", oneYearAgo)
-      .order("reconciliation_date"),
+      .order("reconciliation_date")
+      .limit(2000),
   ]);
 
   return (

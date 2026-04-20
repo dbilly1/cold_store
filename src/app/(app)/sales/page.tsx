@@ -5,6 +5,8 @@ import { format, subDays } from "date-fns";
 
 export const dynamic = "force-dynamic";
 
+const PAGE_SIZE = 30;
+
 export interface DailySummary {
   date: string;
   count: number;
@@ -15,10 +17,19 @@ export interface DailySummary {
   mobile_variance: number | null;
 }
 
-export default async function SalesPage() {
+export default async function SalesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
+  const params = await searchParams;
+  const page = Math.max(0, parseInt(params?.page ?? "0") || 0);
+
   const supabase = await createClient();
   const today = format(new Date(), "yyyy-MM-dd");
-  const ninetyDaysAgo = format(subDays(new Date(), 90), "yyyy-MM-dd");
+  // Page 0: [today-29, today], Page 1: [today-59, today-30], etc.
+  const rangeEnd = format(subDays(new Date(), page * PAGE_SIZE), "yyyy-MM-dd");
+  const rangeStart = format(subDays(new Date(), (page + 1) * PAGE_SIZE - 1), "yyyy-MM-dd");
 
   // Current user role
   const { data: { user } } = await supabase.auth.getUser();
@@ -59,19 +70,37 @@ export default async function SalesPage() {
     .order("full_name");
 
   let dailySummaries: DailySummary[] = [];
+  let hasMore = false;
 
   if (!isSalesperson) {
-    const { data: allSales } = await supabase
-      .from("sales")
-      .select("sale_date, total_amount, payment_method")
-      .eq("is_deleted", false)
-      .gte("sale_date", ninetyDaysAgo)
-      .order("sale_date", { ascending: false });
+    const [
+      { data: allSales },
+      { data: reconciliations },
+      { count: olderCount },
+    ] = await Promise.all([
+      supabase
+        .from("sales")
+        .select("sale_date, total_amount, payment_method")
+        .eq("is_deleted", false)
+        .gte("sale_date", rangeStart)
+        .lte("sale_date", rangeEnd)
+        .order("sale_date", { ascending: false })
+        .limit(5000),
 
-    const { data: reconciliations } = await supabase
-      .from("daily_reconciliations")
-      .select("reconciliation_date, cash_variance, mobile_variance")
-      .gte("reconciliation_date", ninetyDaysAgo);
+      supabase
+        .from("daily_reconciliations")
+        .select("reconciliation_date, cash_variance, mobile_variance")
+        .gte("reconciliation_date", rangeStart)
+        .lte("reconciliation_date", rangeEnd),
+
+      supabase
+        .from("sales")
+        .select("id", { count: "exact", head: true })
+        .eq("is_deleted", false)
+        .lt("sale_date", rangeStart),
+    ]);
+
+    hasMore = (olderCount ?? 0) > 0;
 
     const reconMap = new Map<string, { cash_variance: number; mobile_variance: number }>();
     reconciliations?.forEach((r) => {
@@ -113,6 +142,8 @@ export default async function SalesPage() {
         userRole={role}
         dailySummaries={dailySummaries}
         customers={(customers ?? []) as never}
+        page={page}
+        hasMore={hasMore}
       />
     </div>
   );

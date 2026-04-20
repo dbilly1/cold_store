@@ -5,6 +5,8 @@ import { format, subDays } from "date-fns";
 
 export const dynamic = "force-dynamic";
 
+const PAGE_SIZE = 15;
+
 export interface SessionExpense {
   id: string;
   category: string;
@@ -29,10 +31,19 @@ export interface DaySessionData {
   cash_expenses: number; // direct-only till expenses (batch_id IS NULL)
 }
 
-export default async function ReconciliationPage() {
+export default async function ReconciliationPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
+  const params = await searchParams;
+  const page = Math.max(0, parseInt(params?.page ?? "0") || 0);
+
   const supabase = await createClient();
   const today = format(new Date(), "yyyy-MM-dd");
-  const thirtyDaysAgo = format(subDays(new Date(), 30), "yyyy-MM-dd");
+  // Page 0: [today-14, today], Page 1: [today-29, today-15], etc.
+  const rangeEnd = format(subDays(new Date(), page * PAGE_SIZE), "yyyy-MM-dd");
+  const rangeStart = format(subDays(new Date(), (page + 1) * PAGE_SIZE - 1), "yyyy-MM-dd");
 
   type SaleRow = {
     sale_date: string;
@@ -59,47 +70,66 @@ export default async function ReconciliationPage() {
     created_at: string;
   };
 
-  // Sales — need batch_id and created_at for session grouping
-  const { data: allSalesRaw } = await supabase
-    .from("sales")
-    .select("sale_date, total_amount, payment_method, created_at, batch_id")
-    .eq("is_deleted", false)
-    .gte("sale_date", thirtyDaysAgo);
+  const [
+    { data: allSalesRaw },
+    { data: tillExpensesRaw },
+    { data: creditPaymentsRaw },
+    { count: olderCount },
+  ] = await Promise.all([
+    supabase
+      .from("sales")
+      .select("sale_date, total_amount, payment_method, created_at, batch_id")
+      .eq("is_deleted", false)
+      .gte("sale_date", rangeStart)
+      .lte("sale_date", rangeEnd)
+      .order("sale_date", { ascending: false })
+      .limit(2000),
+
+    supabase
+      .from("expenses")
+      .select("id, expense_date, category, description, amount, batch_id")
+      .eq("paid_from_till", true)
+      .gte("expense_date", rangeStart)
+      .lte("expense_date", rangeEnd)
+      .limit(500),
+
+    supabase
+      .from("credit_payments")
+      .select("customer_id, amount, payment_method, payment_date, created_at")
+      .gte("payment_date", rangeStart)
+      .lte("payment_date", rangeEnd)
+      .limit(500),
+
+    // Peek one row older than rangeStart to know if there's a next page
+    supabase
+      .from("sales")
+      .select("id", { count: "exact", head: true })
+      .eq("is_deleted", false)
+      .lt("sale_date", rangeStart),
+  ]);
+
   const allSales = (allSalesRaw ?? []) as unknown as SaleRow[];
-
-  // Till expenses — fetch full detail so we can split direct vs bulk session
-  const { data: tillExpensesRaw } = await supabase
-    .from("expenses")
-    .select("id, expense_date, category, description, amount, batch_id")
-    .eq("paid_from_till", true)
-    .gte("expense_date", thirtyDaysAgo);
   const tillExpenses = (tillExpensesRaw ?? []) as unknown as ExpenseRow[];
-
-  const { data: creditPaymentsRaw } = await supabase
-    .from("credit_payments")
-    .select("customer_id, amount, payment_method, payment_date, created_at")
-    .gte("payment_date", thirtyDaysAgo);
   const creditPayments = (creditPaymentsRaw ?? []) as unknown as CreditPaymentRow[];
+  const hasMore = (olderCount ?? 0) > 0;
 
   // Group by (sale_date, session_key)
   type SessionAccum = { cash: number; mobile: number; time: string; credit_cash: number; credit_mobile: number };
   const byDateSession = new Map<string, Map<string, SessionAccum>>();
 
   allSales.forEach((s) => {
-    if (s.payment_method === "credit") return; // credit sales not collected yet
+    if (s.payment_method === "credit") return;
     const sessionKey = s.batch_id ?? "direct";
     if (!byDateSession.has(s.sale_date)) byDateSession.set(s.sale_date, new Map());
     const dateMap = byDateSession.get(s.sale_date)!;
     const ex = dateMap.get(sessionKey) ?? { cash: 0, mobile: 0, time: s.created_at, credit_cash: 0, credit_mobile: 0 };
     ex.cash += s.payment_method === "cash" ? s.total_amount : 0;
     ex.mobile += s.payment_method === "mobile_money" ? s.total_amount : 0;
-    if (s.created_at < ex.time) ex.time = s.created_at; // keep earliest
+    if (s.created_at < ex.time) ex.time = s.created_at;
     dateMap.set(sessionKey, ex);
   });
 
-  // Direct till expenses: batch_id IS NULL → go into cash_expenses per date
   const expensesByDate = new Map<string, number>();
-  // Bulk session expenses: batch_id IS NOT NULL → go into session_expenses per batch_id
   const expensesByBatch = new Map<string, SessionExpense[]>();
 
   tillExpenses.forEach((e) => {
@@ -116,7 +146,6 @@ export default async function ReconciliationPage() {
     }
   });
 
-  // Credit repayments go into the "direct" session for their payment_date
   creditPayments.forEach((p) => {
     if (!byDateSession.has(p.payment_date)) byDateSession.set(p.payment_date, new Map());
     const dateMap = byDateSession.get(p.payment_date)!;
@@ -131,7 +160,7 @@ export default async function ReconciliationPage() {
     .sort(([a], [b]) => b.localeCompare(a))
     .map(([date, sessionMap]) => {
       const sessions: SessionData[] = Array.from(sessionMap.entries())
-        .sort(([, a], [, b]) => a.time.localeCompare(b.time)) // chronological
+        .sort(([, a], [, b]) => a.time.localeCompare(b.time))
         .map(([session_key, v], idx) => ({
           session_key,
           session_label: `Session ${idx + 1}`,
@@ -140,7 +169,6 @@ export default async function ReconciliationPage() {
           system_mobile: v.mobile,
           credit_cash: v.credit_cash,
           credit_mobile: v.credit_mobile,
-          // Bulk sessions carry their own expenses; direct sessions use cash_expenses
           session_expenses: session_key !== "direct"
             ? (expensesByBatch.get(session_key) ?? [])
             : [],
@@ -148,7 +176,6 @@ export default async function ReconciliationPage() {
       return { date, sessions, cash_expenses: expensesByDate.get(date) ?? 0 };
     });
 
-  // Reconciliations
   const { data: reconciliations } = await supabase
     .from("daily_reconciliations")
     .select(`
@@ -157,7 +184,8 @@ export default async function ReconciliationPage() {
       status, notes, created_at,
       submitted_by_profile:profiles!daily_reconciliations_submitted_by_fkey(full_name)
     `)
-    .gte("reconciliation_date", thirtyDaysAgo)
+    .gte("reconciliation_date", rangeStart)
+    .lte("reconciliation_date", rangeEnd)
     .order("reconciliation_date", { ascending: false });
 
   return (
@@ -165,8 +193,11 @@ export default async function ReconciliationPage() {
       <TopBar title="Daily Reconciliation" />
       <ReconciliationClient
         today={today}
+        defaultDate={rangeEnd}
         days={days}
         reconciliations={(reconciliations ?? []) as never}
+        page={page}
+        hasMore={hasMore}
       />
     </div>
   );
