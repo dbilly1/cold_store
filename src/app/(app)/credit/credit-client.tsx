@@ -442,6 +442,7 @@ export function CreditClient({
                       method: "cash",
                       date: new Date().toISOString().split("T")[0],
                       notes: "",
+                      collectedAtTill: false,
                     })
                   }
                 >
