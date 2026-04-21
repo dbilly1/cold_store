@@ -29,7 +29,7 @@ export default async function CreditPage() {
   const { data: creditPayments } = await supabase
     .from("credit_payments")
     .select(`
-      id, customer_id, amount, payment_method, payment_date, notes, created_at,
+      id, customer_id, amount, payment_method, payment_date, notes, collected_at_till, created_at,
       recorded_by_profile:profiles!credit_payments_recorded_by_fkey(full_name)
     `)
     .order("payment_date", { ascending: false });

@@ -284,7 +284,7 @@ export function SalesClient({
         p_sale_date: editDialog.sale_date,
         p_payment_method: editDialog.paymentMethod,
         p_customer_id: editDialog.customer_id || null,
-        p_items: JSON.stringify(pItems),
+        p_items: pItems,
       });
 
       if (rpcErr) {

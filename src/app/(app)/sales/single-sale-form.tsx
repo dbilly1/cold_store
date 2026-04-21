@@ -72,6 +72,7 @@ export function SingleSaleForm({
         unit_type: product.unit_type,
         quantity: 1,
         quantity_boxes: 0,
+        units_per_box: product.units_per_box ?? 0,
         unit_price: product.selling_price,
         discount: 0,
       },
@@ -286,23 +287,35 @@ export function SingleSaleForm({
                   className="h-8 text-sm"
                 />
               </div>
-              <div>
-                <Label className="text-xs">Boxes</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={item.quantity_boxes}
-                  onChange={(e) =>
-                    updateItem(
-                      idx,
-                      "quantity_boxes",
-                      parseInt(e.target.value) || 0,
-                    )
-                  }
-                  className="h-8 text-sm"
-                />
-              </div>
+              {item.units_per_box > 0 && item.unit_type !== "boxes" && (
+                <div>
+                  <Label className="text-xs">
+                    Boxes
+                    <span className="text-slate-400 font-normal ml-1">
+                      ({item.units_per_box} {item.unit_type}/box)
+                    </span>
+                  </Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={item.quantity_boxes}
+                    onChange={(e) =>
+                      updateItem(
+                        idx,
+                        "quantity_boxes",
+                        parseInt(e.target.value) || 0,
+                      )
+                    }
+                    className="h-8 text-sm"
+                  />
+                  {item.quantity_boxes > 0 && (
+                    <p className="text-xs text-blue-600 mt-0.5">
+                      = {item.quantity_boxes * item.units_per_box} {item.unit_type}
+                    </p>
+                  )}
+                </div>
+              )}
               <div>
                 <Label className="text-xs">Discount</Label>
                 <Input

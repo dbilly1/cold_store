@@ -205,6 +205,7 @@ export interface CreditPaymentRow {
   payment_date: string;
   recorded_by: string | null;
   notes: string | null;
+  collected_at_till: boolean;
   created_at: string;
 }
 

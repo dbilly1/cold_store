@@ -67,6 +67,7 @@ export default async function ReconciliationPage({
     amount: number;
     payment_method: string;
     payment_date: string;
+    collected_at_till: boolean;
     created_at: string;
   };
 
@@ -95,7 +96,8 @@ export default async function ReconciliationPage({
 
     supabase
       .from("credit_payments")
-      .select("customer_id, amount, payment_method, payment_date, created_at")
+      .select("customer_id, amount, payment_method, payment_date, collected_at_till, created_at")
+      .eq("collected_at_till", true)
       .gte("payment_date", rangeStart)
       .lte("payment_date", rangeEnd)
       .limit(500),

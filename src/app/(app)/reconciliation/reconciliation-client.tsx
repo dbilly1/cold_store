@@ -194,8 +194,6 @@ export function ReconciliationClient({
           system_mobile_total: session.system_mobile + session.credit_mobile,
           actual_cash_entered: cash,
           actual_mobile_entered: mobile,
-          cash_variance: cashV,
-          mobile_variance: mobileV,
           status,
           notes: form.notes || null,
         },

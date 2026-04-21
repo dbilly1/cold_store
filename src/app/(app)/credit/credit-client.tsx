@@ -56,6 +56,7 @@ interface CreditPayment {
   payment_method: string;
   payment_date: string;
   notes: string | null;
+  collected_at_till: boolean;
   recorded_by_profile: { full_name: string } | null;
 }
 
@@ -84,6 +85,7 @@ export function CreditClient({
     method: "cash" as "cash" | "mobile_money",
     date: new Date().toISOString().split("T")[0],
     notes: "",
+    collectedAtTill: false,
   });
   const [paymentSaving, setPaymentSaving] = useState(false);
 
@@ -154,8 +156,9 @@ export function CreditClient({
         payment_date: paymentDialog.date,
         recorded_by: profile!.id,
         notes: paymentDialog.notes || null,
+        collected_at_till: paymentDialog.collectedAtTill,
       })
-      .select("id, customer_id, amount, payment_method, payment_date, notes, created_at")
+      .select("id, customer_id, amount, payment_method, payment_date, notes, collected_at_till, created_at")
       .single();
 
     if (error || !data) {
@@ -186,7 +189,7 @@ export function CreditClient({
 
     setPayments((prev) => [{ ...(data as unknown as CreditPayment), recorded_by_profile: null }, ...prev]);
     toast({ title: "Payment recorded" });
-    setPaymentDialog((p) => ({ ...p, open: false, amount: "", notes: "" }));
+    setPaymentDialog((p) => ({ ...p, open: false, amount: "", notes: "", collectedAtTill: false }));
     setPaymentSaving(false);
   }
 
@@ -563,16 +566,26 @@ export function CreditClient({
                             {formatDate(payment.payment_date)}
                           </td>
                           <td className="p-3">
-                            <Badge
-                              variant="secondary"
-                              className={
-                                payment.payment_method === "cash"
-                                  ? "bg-green-100 text-green-700"
-                                  : "bg-blue-100 text-blue-700"
-                              }
-                            >
-                              {payment.payment_method === "cash" ? "Cash" : "Mobile"}
-                            </Badge>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <Badge
+                                variant="secondary"
+                                className={
+                                  payment.payment_method === "cash"
+                                    ? "bg-green-100 text-green-700"
+                                    : "bg-blue-100 text-blue-700"
+                                }
+                              >
+                                {payment.payment_method === "cash" ? "Cash" : "Mobile"}
+                              </Badge>
+                              {payment.collected_at_till && (
+                                <Badge
+                                  variant="secondary"
+                                  className="bg-purple-100 text-purple-700 text-[10px]"
+                                >
+                                  Till
+                                </Badge>
+                              )}
+                            </div>
                           </td>
                           <td className="p-3 text-right font-medium text-green-600 whitespace-nowrap">
                             +{formatCurrency(payment.amount)}
@@ -652,6 +665,25 @@ export function CreditClient({
                 placeholder="Any notes..."
               />
             </div>
+            <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer hover:bg-slate-50 select-none">
+              <input
+                type="checkbox"
+                className="mt-0.5 rounded"
+                checked={paymentDialog.collectedAtTill}
+                onChange={(e) =>
+                  setPaymentDialog((p) => ({ ...p, collectedAtTill: e.target.checked }))
+                }
+              />
+              <div>
+                <p className="text-sm font-medium text-slate-800">Received at shop</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {paymentDialog.method === "cash"
+                    ? "Tick this if the cash is physically in the till."
+                    : "Tick this if the payment was sent to the shop's mobile account."}
+                  {" "}This will include it in daily reconciliation.
+                </p>
+              </div>
+            </label>
           </div>
           <DialogFooter>
             <Button

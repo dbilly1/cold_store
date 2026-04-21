@@ -301,7 +301,10 @@ export function ReportsClient({
   const dailyTableData = useMemo(() => {
     // Group sales by date directly — ensures every day with sales is included
     // regardless of whether it has been reconciled
-    const salesByDate = new Map<string, { cash: number; mobile: number; credit: number }>();
+    const salesByDate = new Map<
+      string,
+      { cash: number; mobile: number; credit: number }
+    >();
     filteredSales.forEach((s) => {
       const d = s.sale_date.slice(0, 10); // guard against any timestamp suffix
       const ex = salesByDate.get(d) ?? { cash: 0, mobile: 0, credit: 0 };
@@ -319,7 +322,10 @@ export function ReportsClient({
     });
 
     // Aggregate recon by date (multiple sessions per day → sum variances)
-    const reconByDate = new Map<string, { cashVar: number; mobileVar: number; anyFlagged: boolean }>();
+    const reconByDate = new Map<
+      string,
+      { cashVar: number; mobileVar: number; anyFlagged: boolean }
+    >();
     filteredRecons.forEach((r) => {
       const ex = reconByDate.get(r.reconciliation_date);
       if (!ex) {
@@ -346,7 +352,11 @@ export function ReportsClient({
       .filter((d) => d >= dateFrom && d <= dateTo)
       .sort((a, b) => b.localeCompare(a)) // most recent first
       .map((dateStr) => {
-        const sales = salesByDate.get(dateStr) ?? { cash: 0, mobile: 0, credit: 0 };
+        const sales = salesByDate.get(dateStr) ?? {
+          cash: 0,
+          mobile: 0,
+          credit: 0,
+        };
         const expenses = expensesByDate.get(dateStr) ?? 0;
         const total = sales.cash + sales.mobile + sales.credit;
         const recon = reconByDate.get(dateStr) ?? null;
@@ -813,24 +823,24 @@ export function ReportsClient({
         <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="border-b">
+              <thead className="bg-slate-50 border-b">
                 <tr>
-                  <th className="text-left py-2 text-slate-500 font-medium">
+                  <th className="text-left p-3 text-slate-500 font-medium">
                     Product
                   </th>
-                  <th className="text-right py-2 text-slate-500 font-medium">
+                  <th className="text-right p-3 text-slate-500 font-medium">
                     Revenue
                   </th>
-                  <th className="text-right py-2 text-slate-500 font-medium">
+                  <th className="text-right p-3 text-slate-500 font-medium">
                     COGS
                   </th>
-                  <th className="text-right py-2 text-slate-500 font-medium">
+                  <th className="text-right p-3 text-slate-500 font-medium">
                     Gross Profit
                   </th>
-                  <th className="text-right py-2 text-slate-500 font-medium">
+                  <th className="text-right p-3 text-slate-500 font-medium">
                     Margin %
                   </th>
-                  <th className="text-right py-2 text-slate-500 font-medium">
+                  <th className="text-right p-3 text-slate-500 font-medium">
                     Qty Sold
                   </th>
                 </tr>
@@ -838,22 +848,22 @@ export function ReportsClient({
               <tbody className="divide-y">
                 {productProfitability.map((p) => (
                   <tr key={p.name} className="hover:bg-slate-50">
-                    <td className="py-2 font-medium">{p.name}</td>
-                    <td className="py-2 text-right">
+                    <td className="p-3 font-medium">{p.name}</td>
+                    <td className="p-3 text-right">
                       {formatCurrency(p.revenue)}
                     </td>
-                    <td className="py-2 text-right text-slate-500">
+                    <td className="p-3 text-right text-slate-500">
                       {formatCurrency(p.cogs)}
                     </td>
                     <td
-                      className={`py-2 text-right font-semibold ${
+                      className={`p-3 text-right font-semibold ${
                         p.profit >= 0 ? "text-green-600" : "text-red-600"
                       }`}
                     >
                       {formatCurrency(p.profit)}
                     </td>
                     <td
-                      className={`py-2 text-right ${
+                      className={`p-3 text-right ${
                         p.margin >= 20
                           ? "text-green-600"
                           : p.margin >= 10
@@ -863,7 +873,7 @@ export function ReportsClient({
                     >
                       {p.margin.toFixed(1)}%
                     </td>
-                    <td className="py-2 text-right text-slate-500">
+                    <td className="p-3 text-right text-slate-500">
                       {p.qty % 1 === 0 ? p.qty.toFixed(0) : p.qty.toFixed(2)}
                     </td>
                   </tr>
@@ -882,21 +892,21 @@ export function ReportsClient({
               {productProfitability.length > 0 && (
                 <tfoot className="border-t font-semibold">
                   <tr>
-                    <td className="py-2">Total</td>
-                    <td className="py-2 text-right">
+                    <td className="p-3">Total</td>
+                    <td className="p-3 text-right">
                       {formatCurrency(totalRevenue)}
                     </td>
-                    <td className="py-2 text-right text-slate-500">
+                    <td className="p-3 text-right text-slate-500">
                       {formatCurrency(totalCOGS)}
                     </td>
                     <td
-                      className={`py-2 text-right ${
+                      className={`p-3 text-right ${
                         grossProfit >= 0 ? "text-green-600" : "text-red-600"
                       }`}
                     >
                       {formatCurrency(grossProfit)}
                     </td>
-                    <td className="py-2 text-right">
+                    <td className="p-3 text-right">
                       {grossMargin.toFixed(1)}%
                     </td>
                     <td />
@@ -913,20 +923,36 @@ export function ReportsClient({
         <CardHeader>
           <CardTitle className="text-sm">Daily Sales Breakdown</CardTitle>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent>
           <div className="overflow-x-auto">
             <div>
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 border-b sticky top-0 z-10">
                   <tr>
-                    <th className="text-left p-3 font-medium text-slate-600 whitespace-nowrap">Day</th>
-                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">Cash</th>
-                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">Mobile Money</th>
-                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">Credit</th>
-                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">Expenses</th>
-                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">Total Revenue</th>
-                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">Cash Recon</th>
-                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">Mobile Recon</th>
+                    <th className="text-left p-3 font-medium text-slate-600 whitespace-nowrap">
+                      Day
+                    </th>
+                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">
+                      Cash
+                    </th>
+                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">
+                      Mobile Money
+                    </th>
+                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">
+                      Credit
+                    </th>
+                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">
+                      Expenses
+                    </th>
+                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">
+                      Total Revenue
+                    </th>
+                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">
+                      Cash Recon
+                    </th>
+                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">
+                      Mobile Recon
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -937,31 +963,73 @@ export function ReportsClient({
                         key={row.dateStr}
                         className={`hover:bg-slate-50 ${rowFlagged ? "bg-red-50/40" : ""}`}
                       >
-                        <td className="p-3 font-medium whitespace-nowrap">{formatDate(row.dateStr)}</td>
-                        <td className="p-3 text-right text-green-700">{row.cash > 0 ? formatCurrency(row.cash) : <span className="text-slate-300">—</span>}</td>
-                        <td className="p-3 text-right text-sky-700">{row.mobile > 0 ? formatCurrency(row.mobile) : <span className="text-slate-300">—</span>}</td>
-                        <td className="p-3 text-right text-purple-700">{row.credit > 0 ? formatCurrency(row.credit) : <span className="text-slate-300">—</span>}</td>
-                        <td className="p-3 text-right text-amber-700">{row.expenses > 0 ? formatCurrency(row.expenses) : <span className="text-slate-300">—</span>}</td>
-                        <td className="p-3 text-right font-semibold">{formatCurrency(row.total)}</td>
+                        <td className="p-3 font-medium whitespace-nowrap">
+                          {formatDate(row.dateStr)}
+                        </td>
+                        <td className="p-3 text-right text-green-700">
+                          {row.cash > 0 ? (
+                            formatCurrency(row.cash)
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-right text-sky-700">
+                          {row.mobile > 0 ? (
+                            formatCurrency(row.mobile)
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-right text-purple-700">
+                          {row.credit > 0 ? (
+                            formatCurrency(row.credit)
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-right text-amber-700">
+                          {row.expenses > 0 ? (
+                            formatCurrency(row.expenses)
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-right font-semibold">
+                          {formatCurrency(row.total)}
+                        </td>
                         <td className="p-3 text-right">
                           {row.recon === null ? (
-                            <span className="text-xs text-slate-400 italic">Pending</span>
+                            <span className="text-xs text-slate-400 italic">
+                              Pending
+                            </span>
                           ) : row.recon.cashVar === 0 ? (
-                            <span className="text-green-600 font-medium">Balanced</span>
+                            <span className="text-green-600 font-medium">
+                              Balanced
+                            </span>
                           ) : (
-                            <span className={`font-medium ${row.recon.cashVar > 0 ? "text-amber-600" : "text-red-600"}`}>
-                              {row.recon.cashVar > 0 ? "+" : ""}{formatCurrency(row.recon.cashVar)}
+                            <span
+                              className={`font-medium ${row.recon.cashVar > 0 ? "text-amber-600" : "text-red-600"}`}
+                            >
+                              {row.recon.cashVar > 0 ? "+" : ""}
+                              {formatCurrency(row.recon.cashVar)}
                             </span>
                           )}
                         </td>
                         <td className="p-3 text-right">
                           {row.recon === null ? (
-                            <span className="text-xs text-slate-400 italic">Pending</span>
+                            <span className="text-xs text-slate-400 italic">
+                              Pending
+                            </span>
                           ) : row.recon.mobileVar === 0 ? (
-                            <span className="text-green-600 font-medium">Balanced</span>
+                            <span className="text-green-600 font-medium">
+                              Balanced
+                            </span>
                           ) : (
-                            <span className={`font-medium ${row.recon.mobileVar > 0 ? "text-amber-600" : "text-red-600"}`}>
-                              {row.recon.mobileVar > 0 ? "+" : ""}{formatCurrency(row.recon.mobileVar)}
+                            <span
+                              className={`font-medium ${row.recon.mobileVar > 0 ? "text-amber-600" : "text-red-600"}`}
+                            >
+                              {row.recon.mobileVar > 0 ? "+" : ""}
+                              {formatCurrency(row.recon.mobileVar)}
                             </span>
                           )}
                         </td>
@@ -970,7 +1038,10 @@ export function ReportsClient({
                   })}
                   {dailyTableData.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="text-center py-10 text-muted-foreground">
+                      <td
+                        colSpan={8}
+                        className="text-center py-10 text-muted-foreground"
+                      >
                         No activity in this period
                       </td>
                     </tr>
@@ -980,16 +1051,32 @@ export function ReportsClient({
                   <tfoot className="border-t bg-slate-50 font-semibold sticky bottom-0">
                     <tr>
                       <td className="p-3">Total</td>
-                      <td className="p-3 text-right text-green-700">{formatCurrency(cashRevenue)}</td>
-                      <td className="p-3 text-right text-sky-700">{formatCurrency(mobileRevenue)}</td>
-                      <td className="p-3 text-right text-purple-700">{formatCurrency(creditRevenue)}</td>
-                      <td className="p-3 text-right text-amber-700">{formatCurrency(totalExpenses)}</td>
-                      <td className="p-3 text-right">{formatCurrency(totalRevenue)}</td>
-                      <td className={`p-3 text-right ${totalCashVariance > 0 ? "text-amber-600" : totalCashVariance < 0 ? "text-red-600" : "text-green-600"}`}>
-                        {totalCashVariance >= 0 ? "+" : ""}{formatCurrency(totalCashVariance)}
+                      <td className="p-3 text-right text-green-700">
+                        {formatCurrency(cashRevenue)}
                       </td>
-                      <td className={`p-3 text-right ${totalMobileVariance > 0 ? "text-amber-600" : totalMobileVariance < 0 ? "text-red-600" : "text-green-600"}`}>
-                        {totalMobileVariance >= 0 ? "+" : ""}{formatCurrency(totalMobileVariance)}
+                      <td className="p-3 text-right text-sky-700">
+                        {formatCurrency(mobileRevenue)}
+                      </td>
+                      <td className="p-3 text-right text-purple-700">
+                        {formatCurrency(creditRevenue)}
+                      </td>
+                      <td className="p-3 text-right text-amber-700">
+                        {formatCurrency(totalExpenses)}
+                      </td>
+                      <td className="p-3 text-right">
+                        {formatCurrency(totalRevenue)}
+                      </td>
+                      <td
+                        className={`p-3 text-right ${totalCashVariance > 0 ? "text-amber-600" : totalCashVariance < 0 ? "text-red-600" : "text-green-600"}`}
+                      >
+                        {totalCashVariance >= 0 ? "+" : ""}
+                        {formatCurrency(totalCashVariance)}
+                      </td>
+                      <td
+                        className={`p-3 text-right ${totalMobileVariance > 0 ? "text-amber-600" : totalMobileVariance < 0 ? "text-red-600" : "text-green-600"}`}
+                      >
+                        {totalMobileVariance >= 0 ? "+" : ""}
+                        {formatCurrency(totalMobileVariance)}
                       </td>
                     </tr>
                   </tfoot>

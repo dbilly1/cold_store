@@ -23,6 +23,7 @@ export interface SaleItem {
   unit_type: string;
   quantity: number;
   quantity_boxes: number;
+  units_per_box: number; // 0 means product doesn't sell in boxes
   unit_price: number;
   discount: number;
 }
@@ -147,18 +148,22 @@ export const newBulkRow = (): BulkRow => ({
 });
 
 export function lineTotal(item: SaleItem) {
-  return Math.max(0, item.quantity * item.unit_price - item.discount);
+  const boxEquiv = item.quantity_boxes * (item.units_per_box || 0);
+  return Math.max(0, (item.quantity + boxEquiv) * item.unit_price - item.discount);
 }
 
 export function bulkLineTotal(row: BulkRow, products: Product[]) {
   const product = products.find((p) => p.id === row.product_id);
-  const qty =
-    product?.unit_type === "boxes"
-      ? parseFloat(row.quantity_boxes) || 0
-      : parseFloat(row.quantity) || 0;
+  const qty = parseFloat(row.quantity) || 0;
+  const boxes = parseFloat(row.quantity_boxes) || 0;
   const price = parseFloat(row.unit_price) || 0;
   const disc = parseFloat(row.discount) || 0;
-  return Math.max(0, qty * price - disc);
+  // For "boxes" products the primary unit IS a box — price is per box
+  if (product?.unit_type === "boxes") {
+    return Math.max(0, boxes * price - disc);
+  }
+  const boxEquiv = boxes * (product?.units_per_box || 0);
+  return Math.max(0, (qty + boxEquiv) * price - disc);
 }
 
 export async function refreshSales(

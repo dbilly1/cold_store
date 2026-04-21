@@ -136,8 +136,7 @@ export function BulkEntryDialog({
         const qBoxes = parseFloat(row.quantity_boxes) || 0;
         const price = parseFloat(row.unit_price) || 0;
         const disc = parseFloat(row.discount) || 0;
-        const effectiveQty = product.unit_type === "boxes" ? qBoxes : qty;
-        const total = Math.max(0, effectiveQty * price - disc);
+        const total = bulkLineTotal(row, products);
 
         const { data: sale, error: saleErr } = await supabase
           .from("sales")
