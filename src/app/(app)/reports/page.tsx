@@ -25,7 +25,7 @@ export default async function ReportsPage() {
       )
       .gte("sale_date", oneYearAgo)
       .eq("is_deleted", false)
-      .order("sale_date")
+      .order("sale_date", { ascending: false })
       .limit(20000),
 
     // Expenses — all within data window, no stale cache
@@ -33,7 +33,7 @@ export default async function ReportsPage() {
       .from("expenses")
       .select("expense_date, amount, category")
       .gte("expense_date", oneYearAgo)
-      .order("expense_date")
+      .order("expense_date", { ascending: false })
       .limit(5000),
 
     // Per-product sales with server-side date filter to avoid fetching all-time data
@@ -60,7 +60,7 @@ export default async function ReportsPage() {
       .from("daily_reconciliations")
       .select("reconciliation_date, cash_variance, mobile_variance, status")
       .gte("reconciliation_date", oneYearAgo)
-      .order("reconciliation_date")
+      .order("reconciliation_date", { ascending: false })
       .limit(2000),
   ]);
 
