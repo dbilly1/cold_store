@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { formatCurrency } from "@/lib/utils";
-import { Plus, Package, TrendingUp, Edit, PlusCircle, Search, Truck, Trash2, ArrowUpDown } from "lucide-react";
+import { Plus, Package, TrendingUp, Edit, PlusCircle, Search, Truck, Trash2, ArrowUpDown, X } from "lucide-react";
 import type { UnitType } from "@/types/database";
 
 interface Category { id: string; name: string; }
@@ -51,9 +51,8 @@ interface BulkRestockRow {
   product_id: string;
   quantity_primary: string;
   quantity_boxes: string;
-  cost_price_per_unit: string;
+  cost_per_box: string;  // user enters cost per box; saved as cost per primary unit
   supplier: string;
-  notes: string;
 }
 
 function emptyBulkRow(): BulkRestockRow {
@@ -62,9 +61,8 @@ function emptyBulkRow(): BulkRestockRow {
     product_id: "",
     quantity_primary: "",
     quantity_boxes: "",
-    cost_price_per_unit: "",
+    cost_per_box: "",
     supplier: "",
-    notes: "",
   };
 }
 
@@ -333,7 +331,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
         toast({ title: "Select a product for each row", variant: "destructive" });
         return;
       }
-      const cost = parseFloat(row.cost_price_per_unit);
+      const cost = parseFloat(row.cost_per_box);
       if (!cost || cost <= 0) {
         toast({ title: "Cost price required for each row", variant: "destructive" });
         return;
@@ -353,19 +351,27 @@ export function InventoryClient({ products: initial, categories }: { products: P
       const p = products.find((pr) => pr.id === row.product_id)!;
       const qPrimary = parseFloat(row.quantity_primary) || 0;
       const qBoxes = parseFloat(row.quantity_boxes) || 0;
-      const cost = parseFloat(row.cost_price_per_unit);
-      const primaryQty = qPrimary + qBoxes * (p.units_per_box ?? 0);
-      const totalCost = primaryQty * cost || cost * qBoxes;
+      const costPerBox = parseFloat(row.cost_per_box) || 0;
+      const upb = p.units_per_box ?? 0;
+      // Convert cost/box → cost/primary-unit for WAC calculation.
+      // For "boxes" products and products without a box conversion, cost/box IS cost/unit.
+      const costPerUnit = upb > 0 && p.unit_type !== "boxes"
+        ? costPerBox / upb
+        : costPerBox;
+      const primaryQty = p.unit_type === "boxes"
+        ? qBoxes
+        : qPrimary + qBoxes * upb;
+      const totalCost = primaryQty * costPerUnit;
       return {
         product_id: p.id,
         added_by: profile!.id,
         quantity_kg: p.unit_type === "kg" ? qPrimary : 0,
         quantity_units: p.unit_type === "units" ? qPrimary : 0,
         quantity_boxes: qBoxes,
-        cost_price_per_unit: cost,
+        cost_price_per_unit: costPerUnit,
         total_cost: totalCost,
-        supplier: row.supplier || null,
-        notes: row.notes || null,
+        supplier: row.supplier.trim() || null,
+        notes: null,
       };
     });
 
@@ -710,124 +716,237 @@ export function InventoryClient({ products: initial, categories }: { products: P
       </Dialog>
 
       {/* ── Bulk Restock Dialog ── */}
-      <Dialog open={bulkRestockDialog} onOpenChange={setBulkRestockDialog}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Bulk Restock</DialogTitle>
+      <Dialog open={bulkRestockDialog} onOpenChange={(o) => { if (!bulkSaving) setBulkRestockDialog(o); }}>
+        <DialogContent className="max-w-6xl w-[95vw] max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="px-6 pt-4 pb-3 border-b flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2 pr-8">
+              <Truck className="h-4 w-4 text-blue-500" />
+              Bulk Restock
+            </DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            {bulkRows.map((row, idx) => {
-              const selectedProduct = products.find((p) => p.id === row.product_id) ?? null;
-              const upb = selectedProduct?.units_per_box ?? 0;
-              const qBoxes = parseFloat(row.quantity_boxes) || 0;
-              const showHint = !!selectedProduct && upb > 0 && qBoxes > 0;
-              const ut = selectedProduct?.unit_type;
-              const primaryLbl = ut === "kg" ? "kg" : ut === "units" ? "units" : "boxes";
-              return (
-                <div key={row.rowId} className="border rounded-lg p-3 space-y-2 bg-slate-50">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium text-slate-500">Row {idx + 1}</span>
-                    {bulkRows.length > 1 && (
-                      <button
-                        onClick={() => setBulkRows(bulkRows.filter((r) => r.rowId !== row.rowId))}
-                        className="text-red-400 hover:text-red-600 p-1"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                  {/* Product selector */}
-                  <div>
-                    <Label className="text-xs">Product *</Label>
-                    <Select
-                      value={row.product_id}
-                      onValueChange={(v) => setBulkRows(bulkRows.map((r) => r.rowId === row.rowId ? { ...r, product_id: v, quantity_primary: "", quantity_boxes: "" } : r))}
-                    >
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder="Select product..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {products.filter((p) => p.is_active).sort((a, b) => a.name.localeCompare(b.name)).map((p) => (
-                          <SelectItem key={p.id} value={p.id}>{p.name} <span className="text-slate-400">({p.unit_type})</span></SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {/* Qty fields */}
-                  <div className={selectedProduct?.unit_type === "boxes" ? "grid grid-cols-2 gap-2" : "grid grid-cols-3 gap-2"}>
-                    {selectedProduct && selectedProduct.unit_type !== "boxes" && (
-                      <div>
-                        <Label className="text-xs">{selectedProduct.unit_type === "kg" ? "Weight (kg)" : "Quantity (units)"} *</Label>
+
+          {/* Scrollable table area */}
+          <div className="flex-1 overflow-auto px-6 py-4">
+            <table className="w-full text-sm border-separate border-spacing-y-1">
+              <thead>
+                <tr className="text-left">
+                  <th className="pb-2 font-medium text-slate-500 w-8">#</th>
+                  <th className="pb-2 font-medium text-slate-500 min-w-[200px]">Product *</th>
+                  <th className="pb-2 font-medium text-slate-500 w-32">Qty (primary)</th>
+                  <th className="pb-2 font-medium text-slate-500 w-28">Boxes</th>
+                  <th className="pb-2 font-medium text-slate-500 w-32">Cost / box *</th>
+                  <th className="pb-2 font-medium text-slate-500 w-32 text-right">Total Cost</th>
+                  <th className="pb-2 pl-6 font-medium text-slate-500">Supplier</th>
+                  <th className="pb-2 w-8" />
+                </tr>
+              </thead>
+              <tbody>
+                {bulkRows.map((row, idx) => {
+                  const selectedProduct = products.find((p) => p.id === row.product_id) ?? null;
+                  const upb = selectedProduct?.units_per_box ?? 0;
+                  const ut = selectedProduct?.unit_type;
+                  const qPrimary = parseFloat(row.quantity_primary) || 0;
+                  const qBoxes = parseFloat(row.quantity_boxes) || 0;
+                  const costPerBox = parseFloat(row.cost_per_box) || 0;
+                  const costPerUnit = upb > 0 && ut !== "boxes" ? costPerBox / upb : costPerBox;
+                  const primaryQty = ut === "boxes" ? qBoxes : qPrimary + qBoxes * upb;
+                  const rowTotal = primaryQty * costPerUnit;
+                  const showBoxHint = !!selectedProduct && upb > 0 && qBoxes > 0 && ut !== "boxes";
+
+                  return (
+                    <tr key={row.rowId} className="bg-slate-50">
+                      {/* Row number */}
+                      <td className="pl-2 py-2 rounded-l-lg text-slate-400 text-center align-top pt-3 text-xs">
+                        {idx + 1}
+                      </td>
+
+                      {/* Product */}
+                      <td className="px-2 py-2 align-top">
+                        <Select
+                          value={row.product_id}
+                          onValueChange={(v) =>
+                            setBulkRows(bulkRows.map((r) =>
+                              r.rowId === row.rowId
+                                ? { ...r, product_id: v, quantity_primary: "", quantity_boxes: "" }
+                                : r,
+                            ))
+                          }
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Select product..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {products
+                              .filter((p) => p.is_active)
+                              .sort((a, b) => a.name.localeCompare(b.name))
+                              .map((p) => (
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.name}
+                                  <span className="ml-1 text-slate-400 text-[11px]">({p.unit_type})</span>
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </td>
+
+                      {/* Primary qty */}
+                      <td className="px-2 py-2 align-top">
+                        {selectedProduct && ut !== "boxes" ? (
+                          <Input
+                            type="number"
+                            min="0"
+                            step={ut === "kg" ? "0.001" : "1"}
+                            placeholder={ut === "kg" ? "0.000" : "0"}
+                            value={row.quantity_primary}
+                            onChange={(e) =>
+                              setBulkRows(bulkRows.map((r) =>
+                                r.rowId === row.rowId ? { ...r, quantity_primary: e.target.value } : r,
+                              ))
+                            }
+                            className="h-8 text-xs"
+                          />
+                        ) : (
+                          <span className="text-slate-300 text-xs block text-center pt-2">—</span>
+                        )}
+                      </td>
+
+                      {/* Boxes */}
+                      <td className="px-2 py-2 align-top">
                         <Input
-                          type="number" min="0" step={selectedProduct.unit_type === "kg" ? "0.001" : "1"}
-                          className="h-8 text-xs"
-                          value={row.quantity_primary}
-                          onChange={(e) => setBulkRows(bulkRows.map((r) => r.rowId === row.rowId ? { ...r, quantity_primary: e.target.value } : r))}
+                          type="number"
+                          min="0"
+                          step="0.01"
                           placeholder="0"
+                          value={row.quantity_boxes}
+                          onChange={(e) =>
+                            setBulkRows(bulkRows.map((r) =>
+                              r.rowId === row.rowId ? { ...r, quantity_boxes: e.target.value } : r,
+                            ))
+                          }
+                          className="h-8 text-xs"
                         />
-                      </div>
-                    )}
-                    <div>
-                      <Label className="text-xs">Boxes</Label>
-                      <Input
-                        type="number" min="0" step="0.01"
-                        className="h-8 text-xs"
-                        value={row.quantity_boxes}
-                        onChange={(e) => setBulkRows(bulkRows.map((r) => r.rowId === row.rowId ? { ...r, quantity_boxes: e.target.value } : r))}
-                        placeholder="0"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Cost/{primaryLbl || "unit"} *</Label>
-                      <Input
-                        type="number" min="0" step="0.01"
-                        className="h-8 text-xs"
-                        value={row.cost_price_per_unit}
-                        onChange={(e) => setBulkRows(bulkRows.map((r) => r.rowId === row.rowId ? { ...r, cost_price_per_unit: e.target.value } : r))}
-                        placeholder="0.00"
-                      />
-                    </div>
-                  </div>
-                  {/* Conversion hint */}
-                  {showHint && (
-                    <p className="text-xs text-blue-600">
-                      {qBoxes} box(es) × {upb} {ut === "kg" ? "kg" : "units"}/box = {(qBoxes * upb).toFixed(3)} {ut === "kg" ? "kg" : "units"} added to stock
-                    </p>
-                  )}
-                  {/* Supplier + Notes */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <Label className="text-xs">Supplier</Label>
-                      <Input
-                        className="h-8 text-xs"
-                        value={row.supplier}
-                        onChange={(e) => setBulkRows(bulkRows.map((r) => r.rowId === row.rowId ? { ...r, supplier: e.target.value } : r))}
-                        placeholder="Optional"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Notes</Label>
-                      <Input
-                        className="h-8 text-xs"
-                        value={row.notes}
-                        onChange={(e) => setBulkRows(bulkRows.map((r) => r.rowId === row.rowId ? { ...r, notes: e.target.value } : r))}
-                        placeholder="Optional"
-                      />
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-            <Button variant="outline" size="sm" onClick={() => setBulkRows([...bulkRows, emptyBulkRow()])}>
-              <Plus className="h-3.5 w-3.5 mr-1" /> Add Row
-            </Button>
+                        {showBoxHint && (
+                          <p className="text-[10px] text-blue-600 mt-0.5">
+                            = {(qBoxes * upb).toFixed(ut === "kg" ? 3 : 0)} {ut === "kg" ? "kg" : "units"}
+                          </p>
+                        )}
+                      </td>
+
+                      {/* Cost per box */}
+                      <td className="px-2 py-2 align-top">
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={row.cost_per_box}
+                          onChange={(e) =>
+                            setBulkRows(bulkRows.map((r) =>
+                              r.rowId === row.rowId ? { ...r, cost_per_box: e.target.value } : r,
+                            ))
+                          }
+                          className="h-8 text-xs"
+                        />
+                        {selectedProduct && upb > 0 && ut !== "boxes" && costPerBox > 0 && (
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            = {formatCurrency(costPerUnit)}/{ut === "kg" ? "kg" : "unit"}
+                          </p>
+                        )}
+                      </td>
+
+                      {/* Total cost */}
+                      <td className="px-2 py-2 align-top text-right">
+                        <span className={`text-sm font-semibold ${rowTotal > 0 ? "text-slate-800" : "text-slate-300"}`}>
+                          {rowTotal > 0 ? formatCurrency(rowTotal) : "—"}
+                        </span>
+                      </td>
+
+                      {/* Supplier */}
+                      <td className="pl-6 pr-2 py-2 align-top">
+                        <Input
+                          placeholder="Optional"
+                          value={row.supplier}
+                          onChange={(e) =>
+                            setBulkRows(bulkRows.map((r) =>
+                              r.rowId === row.rowId ? { ...r, supplier: e.target.value } : r,
+                            ))
+                          }
+                          className="h-8 text-xs"
+                        />
+                      </td>
+
+                      {/* Remove row */}
+                      <td className="pr-2 py-2 rounded-r-lg align-top pt-2.5">
+                        <button
+                          onClick={() => setBulkRows(bulkRows.filter((r) => r.rowId !== row.rowId))}
+                          disabled={bulkRows.length === 1}
+                          className="text-slate-300 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* Add row */}
+            <button
+              onClick={() => setBulkRows([...bulkRows, emptyBulkRow()])}
+              className="mt-3 w-full py-2 rounded-lg border-2 border-dashed border-slate-200 text-sm text-slate-400 hover:border-blue-300 hover:text-blue-500 flex items-center justify-center gap-2 transition-colors"
+            >
+              <Plus className="h-4 w-4" />
+              Add another product
+            </button>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBulkRestockDialog(false)}>Cancel</Button>
-            <Button onClick={handleBulkRestock} disabled={bulkSaving}>
-              {bulkSaving ? "Saving..." : `Save ${bulkRows.length} Restock${bulkRows.length !== 1 ? "s" : ""}`}
-            </Button>
-          </DialogFooter>
+
+          {/* Footer */}
+          <div className="px-6 py-4 border-t bg-slate-50 flex-shrink-0">
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-xs text-slate-500">
+                {bulkRows.filter((r) => r.product_id).length} product
+                {bulkRows.filter((r) => r.product_id).length !== 1 ? "s" : ""}
+              </p>
+              <div className="text-right">
+                <p className="text-xs text-slate-500">Total restock value</p>
+                <p className="text-lg font-bold text-blue-600">
+                  {formatCurrency(
+                    bulkRows.reduce((sum, row) => {
+                      const p = products.find((pr) => pr.id === row.product_id);
+                      const upb = p?.units_per_box ?? 0;
+                      const ut = p?.unit_type;
+                      const qPrimary = parseFloat(row.quantity_primary) || 0;
+                      const qBoxes = parseFloat(row.quantity_boxes) || 0;
+                      const costPerBox = parseFloat(row.cost_per_box) || 0;
+                      const costPerUnit = upb > 0 && ut !== "boxes" ? costPerBox / upb : costPerBox;
+                      const qty = ut === "boxes" ? qBoxes : qPrimary + qBoxes * upb;
+                      return sum + qty * costPerUnit;
+                    }, 0),
+                  )}
+                </p>
+              </div>
+            </div>
+            <DialogFooter className="sm:justify-between gap-2 mt-3">
+              <Button
+                variant="outline"
+                onClick={() => { if (!bulkSaving) { setBulkRestockDialog(false); } }}
+                disabled={bulkSaving}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleBulkRestock}
+                disabled={bulkSaving || bulkRows.every((r) => !r.product_id)}
+                className="gap-2 min-w-[160px]"
+              >
+                <Truck className="h-4 w-4" />
+                {bulkSaving
+                  ? "Saving..."
+                  : `Save ${bulkRows.filter((r) => r.product_id).length} Restock${bulkRows.filter((r) => r.product_id).length !== 1 ? "s" : ""}`}
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
