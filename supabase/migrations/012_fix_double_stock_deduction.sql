@@ -1,8 +1,16 @@
--- Replaces the multi-step client-side handleEditSave loop.
--- Accepts the sale header fields + a JSONB array of updated items.
--- All updates (sale_items + sale header) happen in one transaction.
--- Stock adjustment is handled by the after_sale_item_update trigger (009) — NOT here.
--- See 012_fix_double_stock_deduction.sql for the corrected version of this function.
+-- ============================================================
+-- Migration 012: Fix double stock deduction on sale edit
+-- ============================================================
+-- Bug: edit_sale_atomic (011) manually applied a stock delta
+-- after updating sale_items. But the after_sale_item_update
+-- trigger (009) already fires on that UPDATE and does the same
+-- restore-old / deduct-new adjustment. The result was every edit
+-- deducted the quantity difference twice.
+--
+-- Fix: remove the manual stock block from edit_sale_atomic.
+-- The trigger is the single source of truth for stock on UPDATE.
+-- ============================================================
+
 create or replace function public.edit_sale_atomic(
   p_sale_id        uuid,
   p_sale_date      date,
@@ -24,9 +32,6 @@ declare
   v_eff_qty     numeric;
   v_line_total  numeric;
   v_new_total   numeric := 0;
-  v_delta_kg    numeric;
-  v_delta_units numeric;
-  v_delta_boxes numeric;
 begin
   for v_item in select * from jsonb_array_elements(p_items)
   loop
@@ -63,6 +68,11 @@ begin
 
     v_new_total := v_new_total + v_line_total;
 
+    -- Update the sale item.
+    -- NOTE: the after_sale_item_update trigger (009_fix_sale_item_update_stock)
+    -- fires automatically on this UPDATE and handles the full stock adjustment:
+    --   restore OLD quantities → deduct NEW quantities.
+    -- Do NOT add any manual stock update here — that would double-deduct.
     update public.sale_items set
       quantity_kg     = v_new_kg,
       quantity_units  = v_new_units,
@@ -72,19 +82,6 @@ begin
       line_total      = v_line_total
     where id = (v_item->>'id')::uuid;
 
-    -- Stock delta: negative = stock was over-deducted (qty went down), restore it
-    v_delta_kg    := -(v_new_kg    - coalesce(v_old.quantity_kg,    0));
-    v_delta_units := -(v_new_units - coalesce(v_old.quantity_units, 0));
-    v_delta_boxes := -(v_new_boxes - coalesce(v_old.quantity_boxes, 0));
-
-    if v_delta_kg != 0 or v_delta_units != 0 or v_delta_boxes != 0 then
-      update public.products set
-        current_stock_kg    = current_stock_kg    + v_delta_kg,
-        current_stock_units = current_stock_units + v_delta_units,
-        current_stock_boxes = current_stock_boxes + v_delta_boxes,
-        updated_at          = now()
-      where id = v_old.product_id;
-    end if;
   end loop;
 
   update public.sales set
