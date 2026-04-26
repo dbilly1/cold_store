@@ -15,10 +15,10 @@ export default async function CreditPage() {
   const { data: creditSales } = await supabase
     .from("sales")
     .select(`
-      id, sale_date, total_amount, customer_id,
+      id, sale_date, total_amount, customer_id, created_at,
       recorded_by_profile:profiles!sales_recorded_by_fkey(full_name),
       items:sale_items(
-        id, line_total,
+        id, line_total, quantity_kg, quantity_units, quantity_boxes, unit_price, discount_amount,
         product:products(name, unit_type)
       )
     `)

@@ -2,9 +2,6 @@
 
 import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
   BarChart,
@@ -17,32 +14,30 @@ import {
   ResponsiveContainer,
   CartesianGrid,
   Legend,
-  PieChart,
-  Pie,
-  Cell,
 } from "recharts";
-import { format, subDays, eachDayOfInterval, parseISO } from "date-fns";
+import {
+  format,
+  subDays,
+  eachDayOfInterval,
+  parseISO,
+  startOfMonth,
+  endOfMonth,
+  subMonths,
+  differenceInDays,
+  getDay,
+} from "date-fns";
 import {
   TrendingUp,
   TrendingDown,
-  BarChart3,
   CreditCard,
   Info,
   Banknote,
   Smartphone,
   ArrowDownCircle,
-  ArrowUpCircle,
   CircleDollarSign,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
-
-const PIE_COLORS = [
-  "#3b82f6",
-  "#10b981",
-  "#f59e0b",
-  "#ef4444",
-  "#8b5cf6",
-  "#ec4899",
-];
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -91,15 +86,52 @@ interface ReconRecord {
   status: string;
 }
 
-// ─── COGS helper — works for kg, units, and boxes ────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 function itemCOGS(item: SaleItem): number {
-  // Only one of these will be non-zero per item (mutually exclusive unit types)
   const qty =
     (item.quantity_kg || 0) +
     (item.quantity_units || 0) +
     (item.quantity_boxes || 0);
   return qty * (item.cost_price_at_sale || 0);
 }
+
+function qtyLabel(qty: number, unitType: string): string {
+  const n = qty % 1 === 0 ? qty.toFixed(0) : qty.toFixed(2);
+  if (unitType === "kg") return `${n} kg`;
+  if (unitType === "boxes") return `${n} boxes`;
+  return `${n} units`;
+}
+
+function DeltaLabel({
+  current,
+  prior,
+  invert = false,
+}: {
+  current: number;
+  prior: number;
+  invert?: boolean;
+}) {
+  if (prior === 0) return null;
+  const pct = ((current - prior) / prior) * 100;
+  const isGood = invert ? pct <= 0 : pct >= 0;
+  return (
+    <span
+      className={`text-xs flex items-center gap-0.5 mt-1 ${isGood ? "text-green-600" : "text-red-600"}`}
+    >
+      {pct >= 0 ? (
+        <TrendingUp className="h-3 w-3" />
+      ) : (
+        <TrendingDown className="h-3 w-3" />
+      )}
+      {pct >= 0 ? "+" : ""}
+      {pct.toFixed(0)}% vs prior
+    </span>
+  );
+}
+
+type SortKey = "revenue" | "profit" | "margin" | "qty";
+type TabKey = "overview" | "products" | "daily";
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -122,6 +154,47 @@ export function ReportsClient({
     format(subDays(new Date(), 30), "yyyy-MM-dd"),
   );
   const [dateTo, setDateTo] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [activeTab, setActiveTab] = useState<TabKey>("overview");
+  const [activePreset, setActivePreset] = useState("");
+  const [productSort, setProductSort] = useState<{
+    key: SortKey;
+    dir: "asc" | "desc";
+  }>({ key: "revenue", dir: "desc" });
+
+  // ── Presets ────────────────────────────────────────────────────────────────
+  function applyPreset(key: string) {
+    const today = new Date();
+    const todayStr = format(today, "yyyy-MM-dd");
+    const map: Record<string, { from: string; to: string }> = {
+      today: { from: todayStr, to: todayStr },
+      yesterday: {
+        from: format(subDays(today, 1), "yyyy-MM-dd"),
+        to: format(subDays(today, 1), "yyyy-MM-dd"),
+      },
+      this_week: {
+        from: format(subDays(today, 6), "yyyy-MM-dd"),
+        to: todayStr,
+      },
+      last_week: {
+        from: format(subDays(today, 13), "yyyy-MM-dd"),
+        to: format(subDays(today, 7), "yyyy-MM-dd"),
+      },
+      this_month: {
+        from: format(startOfMonth(today), "yyyy-MM-dd"),
+        to: todayStr,
+      },
+      last_month: {
+        from: format(startOfMonth(subMonths(today, 1)), "yyyy-MM-dd"),
+        to: format(endOfMonth(subMonths(today, 1)), "yyyy-MM-dd"),
+      },
+    };
+    const p = map[key];
+    if (p) {
+      setDateFrom(p.from);
+      setDateTo(p.to);
+      setActivePreset(key);
+    }
+  }
 
   const beyondWindow = dateFrom < dataStartDate;
 
@@ -144,14 +217,57 @@ export function ReportsClient({
     () =>
       reconData.filter(
         (r) =>
-          r.reconciliation_date >= dateFrom && r.reconciliation_date <= dateTo,
+          r.reconciliation_date >= dateFrom &&
+          r.reconciliation_date <= dateTo,
       ),
     [reconData, dateFrom, dateTo],
   );
 
-  // ── KPIs ───────────────────────────────────────────────────────────────────
+  // ── Prior period ───────────────────────────────────────────────────────────
+  const periodDays = useMemo(() => {
+    try {
+      return Math.max(0, differenceInDays(parseISO(dateTo), parseISO(dateFrom)));
+    } catch {
+      return 30;
+    }
+  }, [dateFrom, dateTo]);
 
-  // Revenue split by payment method
+  const priorDateTo = useMemo(() => {
+    try {
+      return format(subDays(parseISO(dateFrom), 1), "yyyy-MM-dd");
+    } catch {
+      return dateFrom;
+    }
+  }, [dateFrom]);
+
+  const priorDateFrom = useMemo(() => {
+    try {
+      return format(subDays(parseISO(priorDateTo), periodDays), "yyyy-MM-dd");
+    } catch {
+      return priorDateTo;
+    }
+  }, [priorDateTo, periodDays]);
+
+  const priorBeyondWindow = priorDateFrom < dataStartDate;
+
+  const priorSales = useMemo(
+    () =>
+      salesData.filter(
+        (s) => s.sale_date >= priorDateFrom && s.sale_date <= priorDateTo,
+      ),
+    [salesData, priorDateFrom, priorDateTo],
+  );
+
+  const priorExpenses = useMemo(
+    () =>
+      expenseData.filter(
+        (e) =>
+          e.expense_date >= priorDateFrom && e.expense_date <= priorDateTo,
+      ),
+    [expenseData, priorDateFrom, priorDateTo],
+  );
+
+  // ── Current KPIs ───────────────────────────────────────────────────────────
   const cashRevenue = filteredSales
     .filter((s) => s.payment_method === "cash")
     .reduce((s, sale) => s + sale.total_amount, 0);
@@ -163,7 +279,6 @@ export function ReportsClient({
     .reduce((s, sale) => s + sale.total_amount, 0);
   const totalRevenue = cashRevenue + mobileRevenue + creditRevenue;
 
-  // COGS (fixed — includes boxes)
   const totalCOGS = filteredSales
     .flatMap((s) => s.items ?? [])
     .reduce((s, item) => s + itemCOGS(item), 0);
@@ -171,10 +286,20 @@ export function ReportsClient({
   const totalExpenses = filteredExpenses.reduce((s, e) => s + e.amount, 0);
   const grossProfit = totalRevenue - totalCOGS;
   const netProfit = grossProfit - totalExpenses;
-  const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+  const grossMargin =
+    totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
 
-  // Credit position
-  // — Period: credit sales issued and repayments received within selected date range
+  // ── Prior KPIs ─────────────────────────────────────────────────────────────
+  const priorRevenue = priorSales.reduce((s, sale) => s + sale.total_amount, 0);
+  const priorCOGS = priorSales
+    .flatMap((s) => s.items ?? [])
+    .reduce((s, item) => s + itemCOGS(item), 0);
+  const priorExpensesTotal = priorExpenses.reduce((s, e) => s + e.amount, 0);
+  const priorGrossProfit = priorRevenue - priorCOGS;
+  const priorNetProfit = priorGrossProfit - priorExpensesTotal;
+  const showPrior = !priorBeyondWindow && priorRevenue > 0;
+
+  // ── Credit position ────────────────────────────────────────────────────────
   const filteredCreditPayments = useMemo(
     () =>
       creditPaymentsData.filter(
@@ -186,7 +311,6 @@ export function ReportsClient({
     (s, p) => s + p.amount,
     0,
   );
-  // — All-time balance (runs against the full 1-year data window as a balance sheet figure)
   const allTimeCreditSales = salesData
     .filter((s) => s.payment_method === "credit")
     .reduce((s, sale) => s + sale.total_amount, 0);
@@ -196,7 +320,7 @@ export function ReportsClient({
   );
   const creditOutstanding = allTimeCreditSales - allTimeCreditPaid;
 
-  // Reconciliation summary
+  // ── Reconciliation summary ─────────────────────────────────────────────────
   const totalCashVariance = filteredRecons.reduce(
     (s, r) => s + (r.cash_variance || 0),
     0,
@@ -230,15 +354,6 @@ export function ReportsClient({
         (e) => e.expense_date === dateStr,
       );
       const revenue = daySales.reduce((s, sale) => s + sale.total_amount, 0);
-      const cash = daySales
-        .filter((s) => s.payment_method === "cash")
-        .reduce((s, sale) => s + sale.total_amount, 0);
-      const mobile = daySales
-        .filter((s) => s.payment_method === "mobile_money")
-        .reduce((s, sale) => s + sale.total_amount, 0);
-      const credit = daySales
-        .filter((s) => s.payment_method === "credit")
-        .reduce((s, sale) => s + sale.total_amount, 0);
       const cogs = daySales
         .flatMap((s) => s.items ?? [])
         .reduce((s, item) => s + itemCOGS(item), 0);
@@ -248,13 +363,35 @@ export function ReportsClient({
         revenue: Math.round(revenue * 100) / 100,
         gross_profit: Math.round((revenue - cogs) * 100) / 100,
         net_profit: Math.round((revenue - cogs - expenses) * 100) / 100,
-        cash: Math.round(cash * 100) / 100,
-        mobile: Math.round(mobile * 100) / 100,
-        credit: Math.round(credit * 100) / 100,
-        expenses: Math.round(expenses * 100) / 100,
       };
     });
   }, [filteredSales, filteredExpenses, dateFrom, dateTo]);
+
+  // ── Day-of-week average revenue ────────────────────────────────────────────
+  const dayOfWeekData = useMemo(() => {
+    const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const acc: Record<number, { total: number; count: number }> = Object.fromEntries(
+      DOW.map((_, i) => [i, { total: 0, count: 0 }]),
+    );
+    const byDate = new Map<string, number>();
+    filteredSales.forEach((s) =>
+      byDate.set(s.sale_date, (byDate.get(s.sale_date) ?? 0) + s.total_amount),
+    );
+    byDate.forEach((total, dateStr) => {
+      try {
+        const dow = getDay(parseISO(dateStr));
+        acc[dow].total += total;
+        acc[dow].count += 1;
+      } catch {
+        // skip invalid dates
+      }
+    });
+    return DOW.map((name, i) => ({
+      name,
+      avg: acc[i].count > 0 ? Math.round(acc[i].total / acc[i].count) : 0,
+      days: acc[i].count,
+    }));
+  }, [filteredSales]);
 
   // ── Product profitability ──────────────────────────────────────────────────
   const filteredProductSales = useMemo(() => {
@@ -269,7 +406,7 @@ export function ReportsClient({
   const productProfitability = useMemo(() => {
     const byProduct: Record<
       string,
-      { name: string; revenue: number; cogs: number; qty: number }
+      { name: string; unit_type: string; revenue: number; cogs: number; qty: number }
     > = {};
     filteredProductSales.forEach((item) => {
       const p = item.product as { name: string; unit_type: string } | null;
@@ -277,6 +414,7 @@ export function ReportsClient({
       if (!byProduct[item.product_id])
         byProduct[item.product_id] = {
           name: p.name,
+          unit_type: p.unit_type,
           revenue: 0,
           cogs: 0,
           qty: 0,
@@ -288,40 +426,54 @@ export function ReportsClient({
         (item.quantity_units || 0) +
         (item.quantity_boxes || 0);
     });
-    return Object.values(byProduct)
-      .map((p) => ({
-        ...p,
-        profit: p.revenue - p.cogs,
-        margin: p.revenue > 0 ? ((p.revenue - p.cogs) / p.revenue) * 100 : 0,
-      }))
-      .sort((a, b) => b.revenue - a.revenue);
-  }, [filteredProductSales]);
+    const result = Object.values(byProduct).map((p) => ({
+      ...p,
+      profit: p.revenue - p.cogs,
+      margin:
+        p.revenue > 0 ? ((p.revenue - p.cogs) / p.revenue) * 100 : 0,
+    }));
+    const { key, dir } = productSort;
+    return result.sort((a, b) =>
+      dir === "desc" ? b[key] - a[key] : a[key] - b[key],
+    );
+  }, [filteredProductSales, productSort]);
 
-  // ── Daily sales table ─────────────────────────────────────────────────────
+  // ── Expense by category ────────────────────────────────────────────────────
+  const expenseByCategory = useMemo(() => {
+    const cats: Record<string, number> = {};
+    filteredExpenses.forEach(
+      (e) => (cats[e.category] = (cats[e.category] ?? 0) + e.amount),
+    );
+    return Object.entries(cats)
+      .map(([name, value]) => ({ name: name.replace(/_/g, " "), value }))
+      .sort((a, b) => b.value - a.value);
+  }, [filteredExpenses]);
+
+  // ── Daily sales table ──────────────────────────────────────────────────────
   const dailyTableData = useMemo(() => {
-    // Group sales by date directly — ensures every day with sales is included
-    // regardless of whether it has been reconciled
     const salesByDate = new Map<
       string,
       { cash: number; mobile: number; credit: number }
     >();
     filteredSales.forEach((s) => {
-      const d = s.sale_date.slice(0, 10); // guard against any timestamp suffix
+      const d = s.sale_date.slice(0, 10);
       const ex = salesByDate.get(d) ?? { cash: 0, mobile: 0, credit: 0 };
       if (s.payment_method === "cash") ex.cash += s.total_amount;
       else if (s.payment_method === "mobile_money") ex.mobile += s.total_amount;
       else if (s.payment_method === "credit") ex.credit += s.total_amount;
       salesByDate.set(d, ex);
     });
-
-    // Group expenses by date
     const expensesByDate = new Map<string, number>();
     filteredExpenses.forEach((e) => {
       const d = e.expense_date.slice(0, 10);
       expensesByDate.set(d, (expensesByDate.get(d) ?? 0) + e.amount);
     });
 
-    // Aggregate recon by date (multiple sessions per day → sum variances)
+    const repaymentsByDate = new Map<string, number>();
+    filteredCreditPayments.forEach((p) => {
+      const d = p.payment_date.slice(0, 10);
+      repaymentsByDate.set(d, (repaymentsByDate.get(d) ?? 0) + p.amount);
+    });
     const reconByDate = new Map<
       string,
       { cashVar: number; mobileVar: number; anyFlagged: boolean }
@@ -340,17 +492,15 @@ export function ReportsClient({
         if (r.status === "flagged") ex.anyFlagged = true;
       }
     });
-
-    // Union of all dates that have any data
     const allDates = new Set([
       ...salesByDate.keys(),
       ...expensesByDate.keys(),
       ...reconByDate.keys(),
+      ...repaymentsByDate.keys(),
     ]);
-
     return Array.from(allDates)
       .filter((d) => d >= dateFrom && d <= dateTo)
-      .sort((a, b) => b.localeCompare(a)) // most recent first
+      .sort((a, b) => b.localeCompare(a))
       .map((dateStr) => {
         const sales = salesByDate.get(dateStr) ?? {
           cash: 0,
@@ -358,576 +508,623 @@ export function ReportsClient({
           credit: 0,
         };
         const expenses = expensesByDate.get(dateStr) ?? 0;
+        const repayments = repaymentsByDate.get(dateStr) ?? 0;
         const total = sales.cash + sales.mobile + sales.credit;
         const recon = reconByDate.get(dateStr) ?? null;
-        return { dateStr, ...sales, expenses, total, recon };
+        return { dateStr, ...sales, expenses, repayments, total, recon };
       });
-  }, [filteredSales, filteredExpenses, filteredRecons, dateFrom, dateTo]);
+  }, [filteredSales, filteredExpenses, filteredRecons, filteredCreditPayments, dateFrom, dateTo]);
 
-  // ── Expense by category ────────────────────────────────────────────────────
-  const expenseByCategory = useMemo(() => {
-    const cats: Record<string, number> = {};
-    filteredExpenses.forEach(
-      (e) => (cats[e.category] = (cats[e.category] ?? 0) + e.amount),
+  // ── Sort header helper ─────────────────────────────────────────────────────
+  function SortHeader({
+    col,
+    label,
+  }: {
+    col: SortKey;
+    label: string;
+  }) {
+    const active = productSort.key === col;
+    return (
+      <th
+        className="text-right p-3 text-slate-500 font-medium cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
+        onClick={() =>
+          setProductSort((s) =>
+            s.key === col
+              ? { ...s, dir: s.dir === "desc" ? "asc" : "desc" }
+              : { key: col, dir: "desc" },
+          )
+        }
+      >
+        <span className="flex items-center justify-end gap-1">
+          {label}
+          {active ? (
+            productSort.dir === "desc" ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronUp className="h-3 w-3" />
+            )
+          ) : (
+            <span className="h-3 w-3" />
+          )}
+        </span>
+      </th>
     );
-    return Object.entries(cats).map(([name, value]) => ({
-      name: name.replace(/_/g, " "),
-      value,
-    }));
-  }, [filteredExpenses]);
+  }
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
-      {/* Date range picker */}
-      <div className="flex items-center gap-3 bg-white border rounded-lg p-3 flex-wrap">
-        <BarChart3 className="h-4 w-4 text-blue-500 flex-shrink-0" />
-        <Label className="text-sm">Period:</Label>
-        <Input
+    <div className="flex flex-col flex-1 overflow-hidden">
+      {/* Tab bar — matches history page style */}
+      <div className="flex-shrink-0 border-b bg-white px-6">
+        <div className="flex gap-1">
+          {(
+            [
+              { key: "overview", label: "Overview" },
+              { key: "products", label: "Products" },
+              { key: "daily", label: "Daily Detail" },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setActiveTab(t.key)}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === t.key
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Date controls */}
+      <div className="flex-shrink-0 border-b bg-white px-6 py-3 flex items-center gap-3 flex-wrap">
+        <div className="flex gap-1 flex-wrap">
+          {(
+            [
+              { key: "today", label: "Today" },
+              { key: "yesterday", label: "Yesterday" },
+              { key: "this_week", label: "This Week" },
+              { key: "last_week", label: "Last Week" },
+              { key: "this_month", label: "This Month" },
+              { key: "last_month", label: "Last Month" },
+            ] as const
+          ).map((p) => (
+            <button
+              key={p.key}
+              onClick={() => applyPreset(p.key)}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
+                activePreset === p.key
+                  ? "bg-blue-600 text-white border-blue-600"
+                  : "bg-white text-slate-600 border-slate-200 hover:border-blue-400 hover:text-blue-600"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <input
           type="date"
           value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
-          className="w-36 h-8"
+          onChange={(e) => { setDateFrom(e.target.value); setActivePreset("custom"); }}
+          className="text-xs border border-slate-200 rounded-md px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
         <span className="text-muted-foreground text-sm">to</span>
-        <Input
+        <input
           type="date"
           value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
-          className="w-36 h-8"
+          onChange={(e) => { setDateTo(e.target.value); setActivePreset("custom"); }}
+          className="text-xs border border-slate-200 rounded-md px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
         {beyondWindow && (
-          <span className="flex items-center gap-1.5 text-xs text-amber-600 ml-2">
+          <span className="flex items-center gap-1.5 text-xs text-amber-600">
             <Info className="h-3.5 w-3.5" />
-            Data only available from {formatDate(dataStartDate)} — results may
-            be incomplete
+            Data from {formatDate(dataStartDate)} — results may be incomplete
           </span>
         )}
       </div>
 
-      {/* ── KPI Section: 75 / 25 split ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[3fr_1fr] gap-4 lg:items-stretch">
-        {/* Left 75% — Revenue Breakdown + Profitability stacked */}
-        <div className="space-y-4">
-          {/* Row 1 — Revenue Breakdown */}
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 mb-1">
-                  <CircleDollarSign className="h-4 w-4 text-blue-400" />
-                  <p className="text-xs text-muted-foreground">Total Revenue</p>
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
+        {/* ── Overview ───────────────────────────────────────────────────── */}
+        {activeTab === "overview" && (
+          <div className="space-y-6">
+            {/* KPI grid — 75/25 */}
+            <div className="grid grid-cols-1 lg:grid-cols-[3fr_1fr] gap-4 lg:items-stretch">
+              {/* Left — Revenue + Profitability */}
+              <div className="space-y-4">
+                {/* Revenue row */}
+                <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-1">
+                        <CircleDollarSign className="h-4 w-4 text-blue-400" />
+                        <p className="text-xs text-muted-foreground">
+                          Total Revenue
+                        </p>
+                      </div>
+                      <p className="text-xl font-bold text-blue-600">
+                        {formatCurrency(totalRevenue)}
+                      </p>
+                      {showPrior && (
+                        <DeltaLabel current={totalRevenue} prior={priorRevenue} />
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Banknote className="h-4 w-4 text-green-400" />
+                        <p className="text-xs text-muted-foreground">
+                          Cash Sales
+                        </p>
+                      </div>
+                      <p className="text-xl font-bold text-green-600">
+                        {formatCurrency(cashRevenue)}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {totalRevenue > 0
+                          ? ((cashRevenue / totalRevenue) * 100).toFixed(0)
+                          : 0}
+                        % of revenue
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Smartphone className="h-4 w-4 text-sky-400" />
+                        <p className="text-xs text-muted-foreground">
+                          Mobile Money
+                        </p>
+                      </div>
+                      <p className="text-xl font-bold text-sky-600">
+                        {formatCurrency(mobileRevenue)}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {totalRevenue > 0
+                          ? ((mobileRevenue / totalRevenue) * 100).toFixed(0)
+                          : 0}
+                        % of revenue
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-1">
+                        <CreditCard className="h-4 w-4 text-purple-400" />
+                        <p className="text-xs text-muted-foreground">
+                          Credit Sales
+                        </p>
+                      </div>
+                      <p className="text-xl font-bold text-purple-600">
+                        {formatCurrency(creditRevenue)}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {totalRevenue > 0
+                          ? ((creditRevenue / totalRevenue) * 100).toFixed(0)
+                          : 0}
+                        % of revenue
+                      </p>
+                    </CardContent>
+                  </Card>
                 </div>
-                <p className="text-xl font-bold text-blue-600">
-                  {formatCurrency(totalRevenue)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  all payment methods
-                </p>
-              </CardContent>
-            </Card>
 
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 mb-1">
-                  <Banknote className="h-4 w-4 text-green-400" />
-                  <p className="text-xs text-muted-foreground">Cash Sales</p>
-                </div>
-                <p className="text-xl font-bold text-green-600">
-                  {formatCurrency(cashRevenue)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {totalRevenue > 0
-                    ? ((cashRevenue / totalRevenue) * 100).toFixed(0)
-                    : 0}
-                  % of revenue
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 mb-1">
-                  <Smartphone className="h-4 w-4 text-sky-400" />
-                  <p className="text-xs text-muted-foreground">Mobile Money</p>
-                </div>
-                <p className="text-xl font-bold text-sky-600">
-                  {formatCurrency(mobileRevenue)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {totalRevenue > 0
-                    ? ((mobileRevenue / totalRevenue) * 100).toFixed(0)
-                    : 0}
-                  % of revenue
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 mb-1">
-                  <CreditCard className="h-4 w-4 text-purple-400" />
-                  <p className="text-xs text-muted-foreground">Credit Sales</p>
-                </div>
-                <p className="text-xl font-bold text-purple-600">
-                  {formatCurrency(creditRevenue)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {totalRevenue > 0
-                    ? ((creditRevenue / totalRevenue) * 100).toFixed(0)
-                    : 0}
-                  % of revenue
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Row 2 — Profitability */}
-          <div className="grid grid-cols-3 gap-3">
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">Gross Profit</p>
-                <p
-                  className={`text-xl font-bold ${grossProfit >= 0 ? "text-green-600" : "text-red-600"}`}
-                >
-                  {formatCurrency(grossProfit)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {grossMargin.toFixed(1)}% margin
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">Expenses</p>
-                <p className="text-xl font-bold text-amber-600">
-                  {formatCurrency(totalExpenses)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  operating costs
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">Net Profit</p>
-                <p
-                  className={`text-xl font-bold ${netProfit >= 0 ? "text-green-700" : "text-red-700"}`}
-                >
-                  {formatCurrency(netProfit)}
-                </p>
-                <div className="mt-1">
-                  {netProfit >= 0 ? (
-                    <TrendingUp className="h-3 w-3 text-green-500" />
-                  ) : (
-                    <TrendingDown className="h-3 w-3 text-red-500" />
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-
-        {/* Right 25% — Credit Position */}
-        <Card className="flex flex-col">
-          <CardContent className="flex flex-col flex-1 justify-around space-y-2 px-6 py-4">
-            {/* Repayments Received */}
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5">
-                <ArrowDownCircle className="h-3.5 w-3.5 text-green-400" />
-                <p className="text-xs text-muted-foreground">
-                  Repayments Received
-                </p>
-              </div>
-              <p className="text-xl font-bold text-green-600">
-                {formatCurrency(periodCreditPaid)}
-              </p>
-              <p className="text-xs text-slate-400">
-                payments collected this period
-              </p>
-            </div>
-
-            <div className="border-t" />
-
-            {/* Outstanding Balance */}
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5">
-                <CircleDollarSign className="h-3.5 w-3.5 text-amber-400" />
-                <p className="text-xs text-muted-foreground">
-                  Outstanding Balance
-                </p>
-              </div>
-              <p
-                className={`text-xl font-bold ${creditOutstanding > 0 ? "text-amber-600" : "text-green-600"}`}
-              >
-                {formatCurrency(Math.max(0, creditOutstanding))}
-              </p>
-              <p className="text-xs text-slate-400">
-                total unpaid across all customers
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Charts Row 1: Daily P&L + Expense Pie */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Daily Revenue vs Profit */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-sm">Daily Revenue vs Profit</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={dailyData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                <YAxis
-                  tick={{ fontSize: 11 }}
-                  tickFormatter={(v) => `₵${(v / 1000).toFixed(1)}k`}
-                />
-                <Tooltip
-                  formatter={(v: number) => formatCurrency(v)}
-                  contentStyle={{ borderRadius: "8px" }}
-                />
-                <Legend />
-                <Line
-                  type="monotone"
-                  dataKey="revenue"
-                  stroke="#3b82f6"
-                  strokeWidth={2}
-                  dot={false}
-                  name="Revenue"
-                />
-                <Line
-                  type="monotone"
-                  dataKey="gross_profit"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  dot={false}
-                  name="Gross Profit"
-                />
-                <Line
-                  type="monotone"
-                  dataKey="net_profit"
-                  stroke="#8b5cf6"
-                  strokeWidth={2}
-                  dot={false}
-                  name="Net Profit"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Expense Breakdown */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Expense Breakdown</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {expenseByCategory.length > 0 ? (
-              <>
-                <ResponsiveContainer width="100%" height={160}>
-                  <PieChart>
-                    <Pie
-                      data={expenseByCategory}
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={70}
-                      dataKey="value"
-                      label={false}
-                    >
-                      {expenseByCategory.map((_, index) => (
-                        <Cell
-                          key={index}
-                          fill={PIE_COLORS[index % PIE_COLORS.length]}
+                {/* Profitability row */}
+                <div className="grid grid-cols-3 gap-3">
+                  <Card>
+                    <CardContent className="p-4">
+                      <p className="text-xs text-muted-foreground">
+                        Gross Profit
+                      </p>
+                      <p
+                        className={`text-xl font-bold ${grossProfit >= 0 ? "text-green-600" : "text-red-600"}`}
+                      >
+                        {formatCurrency(grossProfit)}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {grossMargin.toFixed(1)}% margin
+                      </p>
+                      {showPrior && (
+                        <DeltaLabel
+                          current={grossProfit}
+                          prior={priorGrossProfit}
                         />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(v: number) => formatCurrency(v)} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="space-y-1 mt-2">
-                  {expenseByCategory.map((cat, i) => (
-                    <div
-                      key={cat.name}
-                      className="flex items-center justify-between text-xs"
-                    >
-                      <span className="flex items-center gap-1">
-                        <span
-                          className="h-2 w-2 rounded-full flex-shrink-0"
-                          style={{
-                            backgroundColor: PIE_COLORS[i % PIE_COLORS.length],
-                          }}
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent className="p-4">
+                      <p className="text-xs text-muted-foreground">Expenses</p>
+                      <p className="text-xl font-bold text-amber-600">
+                        {formatCurrency(totalExpenses)}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        operating costs
+                      </p>
+                      {showPrior && (
+                        <DeltaLabel
+                          current={totalExpenses}
+                          prior={priorExpensesTotal}
+                          invert
                         />
-                        <span className="capitalize">{cat.name}</span>
-                      </span>
-                      <span className="font-semibold">
-                        {formatCurrency(cat.value)}
-                      </span>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent className="p-4">
+                      <p className="text-xs text-muted-foreground">
+                        Net Profit
+                      </p>
+                      <p
+                        className={`text-xl font-bold ${netProfit >= 0 ? "text-green-700" : "text-red-700"}`}
+                      >
+                        {formatCurrency(netProfit)}
+                      </p>
+                      {showPrior && (
+                        <DeltaLabel
+                          current={netProfit}
+                          prior={priorNetProfit}
+                        />
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+
+              {/* Right — Credit position */}
+              <Card className="flex flex-col">
+                <CardContent className="flex flex-col flex-1 justify-around space-y-2 px-6 py-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <ArrowDownCircle className="h-3.5 w-3.5 text-green-400" />
+                      <p className="text-xs text-muted-foreground">
+                        Repayments Received
+                      </p>
                     </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No expenses in period
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Charts Row 2: Payment Method Breakdown + Reconciliation Summary */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Payment Method Breakdown */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-sm">Revenue by Payment Method</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={dailyData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                <YAxis
-                  tick={{ fontSize: 11 }}
-                  tickFormatter={(v) => `₵${(v / 1000).toFixed(1)}k`}
-                />
-                <Tooltip
-                  formatter={(v: number) => formatCurrency(v)}
-                  contentStyle={{ borderRadius: "8px" }}
-                />
-                <Legend />
-                <Bar
-                  dataKey="cash"
-                  stackId="a"
-                  fill="#10b981"
-                  name="Cash"
-                  radius={[0, 0, 0, 0]}
-                />
-                <Bar
-                  dataKey="mobile"
-                  stackId="a"
-                  fill="#3b82f6"
-                  name="Mobile Money"
-                  radius={[0, 0, 0, 0]}
-                />
-                <Bar
-                  dataKey="credit"
-                  stackId="a"
-                  fill="#8b5cf6"
-                  name="Credit"
-                  radius={[4, 4, 0, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Reconciliation Summary */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Reconciliation Summary</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {filteredRecons.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                No reconciliations in period
-              </p>
-            ) : (
-              <>
-                {/* Session counts */}
-                <div className="flex gap-3">
-                  <div className="flex-1 bg-green-50 rounded-lg p-3 text-center">
-                    <p className="text-lg font-bold text-green-600">
-                      {balancedCount}
+                    <p className="text-xl font-bold text-green-600">
+                      {formatCurrency(periodCreditPaid)}
                     </p>
-                    <p className="text-xs text-green-700">Balanced</p>
-                  </div>
-                  <div className="flex-1 bg-red-50 rounded-lg p-3 text-center">
-                    <p className="text-lg font-bold text-red-600">
-                      {flaggedCount}
+                    <p className="text-xs text-slate-400">
+                      collected this period
                     </p>
-                    <p className="text-xs text-red-700">Flagged</p>
                   </div>
-                </div>
+                  <div className="border-t" />
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <CircleDollarSign className="h-3.5 w-3.5 text-amber-400" />
+                      <p className="text-xs text-muted-foreground">
+                        Outstanding Balance
+                      </p>
+                    </div>
+                    <p
+                      className={`text-xl font-bold ${creditOutstanding > 0 ? "text-amber-600" : "text-green-600"}`}
+                    >
+                      {formatCurrency(Math.max(0, creditOutstanding))}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      unpaid across all customers
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
 
-                {/* Variance totals */}
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500">Cash variance</span>
-                    <span
-                      className={`font-semibold ${
-                        totalCashVariance > 0
-                          ? "text-amber-600"
-                          : totalCashVariance < 0
-                            ? "text-red-600"
-                            : "text-green-600"
-                      }`}
-                    >
-                      {totalCashVariance >= 0 ? "+" : ""}
-                      {formatCurrency(totalCashVariance)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500">Mobile variance</span>
-                    <span
-                      className={`font-semibold ${
-                        totalMobileVariance > 0
-                          ? "text-amber-600"
-                          : totalMobileVariance < 0
-                            ? "text-red-600"
-                            : "text-green-600"
-                      }`}
-                    >
-                      {totalMobileVariance >= 0 ? "+" : ""}
-                      {formatCurrency(totalMobileVariance)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center border-t pt-2">
-                    <span className="text-slate-700 font-medium">
-                      Net variance
-                    </span>
-                    <span
-                      className={`font-bold ${
-                        totalCashVariance + totalMobileVariance > 0
-                          ? "text-amber-600"
-                          : totalCashVariance + totalMobileVariance < 0
-                            ? "text-red-600"
-                            : "text-green-600"
-                      }`}
-                    >
-                      {totalCashVariance + totalMobileVariance >= 0 ? "+" : ""}
-                      {formatCurrency(totalCashVariance + totalMobileVariance)}
-                    </span>
-                  </div>
-                </div>
+            {/* Charts row 1: Daily P&L + Expense breakdown */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-sm">
+                    Daily Revenue vs Profit
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <LineChart data={dailyData}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="#f1f5f9"
+                      />
+                      <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                      <YAxis
+                        tick={{ fontSize: 11 }}
+                        tickFormatter={(v) =>
+                          `₵${(v / 1000).toFixed(1)}k`
+                        }
+                      />
+                      <Tooltip
+                        formatter={(v: number) => formatCurrency(v)}
+                        contentStyle={{ borderRadius: "8px" }}
+                      />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="revenue"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        dot={false}
+                        name="Revenue"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="gross_profit"
+                        stroke="#10b981"
+                        strokeWidth={2}
+                        dot={false}
+                        name="Gross Profit"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="net_profit"
+                        stroke="#8b5cf6"
+                        strokeWidth={2}
+                        dot={false}
+                        name="Net Profit"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
 
-                <p className="text-xs text-slate-400">
-                  Positive = surplus collected · Negative = shortfall
-                </p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Expense Breakdown</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {expenseByCategory.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart
+                        data={expenseByCategory}
+                        layout="vertical"
+                        margin={{ left: 8, right: 16, top: 4, bottom: 4 }}
+                      >
+                        <XAxis
+                          type="number"
+                          tick={{ fontSize: 11 }}
+                          tickFormatter={(v) =>
+                            `₵${(v / 1000).toFixed(1)}k`
+                          }
+                        />
+                        <YAxis
+                          type="category"
+                          dataKey="name"
+                          tick={{ fontSize: 11 }}
+                          width={90}
+                        />
+                        <Tooltip
+                          formatter={(v: number) => formatCurrency(v)}
+                          contentStyle={{ borderRadius: "8px" }}
+                        />
+                        <Bar
+                          dataKey="value"
+                          fill="#f59e0b"
+                          radius={[0, 4, 4, 0]}
+                          name="Amount"
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      No expenses in period
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
 
-      {/* Product Profitability Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Product Profitability</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 border-b">
-                <tr>
-                  <th className="text-left p-3 text-slate-500 font-medium">
-                    Product
-                  </th>
-                  <th className="text-right p-3 text-slate-500 font-medium">
-                    Revenue
-                  </th>
-                  <th className="text-right p-3 text-slate-500 font-medium">
-                    COGS
-                  </th>
-                  <th className="text-right p-3 text-slate-500 font-medium">
-                    Gross Profit
-                  </th>
-                  <th className="text-right p-3 text-slate-500 font-medium">
-                    Margin %
-                  </th>
-                  <th className="text-right p-3 text-slate-500 font-medium">
-                    Qty Sold
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {productProfitability.map((p) => (
-                  <tr key={p.name} className="hover:bg-slate-50">
-                    <td className="p-3 font-medium">{p.name}</td>
-                    <td className="p-3 text-right">
-                      {formatCurrency(p.revenue)}
-                    </td>
-                    <td className="p-3 text-right text-slate-500">
-                      {formatCurrency(p.cogs)}
-                    </td>
-                    <td
-                      className={`p-3 text-right font-semibold ${
-                        p.profit >= 0 ? "text-green-600" : "text-red-600"
-                      }`}
-                    >
-                      {formatCurrency(p.profit)}
-                    </td>
-                    <td
-                      className={`p-3 text-right ${
-                        p.margin >= 20
-                          ? "text-green-600"
-                          : p.margin >= 10
-                            ? "text-amber-600"
-                            : "text-red-600"
-                      }`}
-                    >
-                      {p.margin.toFixed(1)}%
-                    </td>
-                    <td className="p-3 text-right text-slate-500">
-                      {p.qty % 1 === 0 ? p.qty.toFixed(0) : p.qty.toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-                {productProfitability.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      className="text-center py-8 text-muted-foreground"
-                    >
-                      No sales in this period
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-              {productProfitability.length > 0 && (
-                <tfoot className="border-t font-semibold">
-                  <tr>
-                    <td className="p-3">Total</td>
-                    <td className="p-3 text-right">
-                      {formatCurrency(totalRevenue)}
-                    </td>
-                    <td className="p-3 text-right text-slate-500">
-                      {formatCurrency(totalCOGS)}
-                    </td>
-                    <td
-                      className={`p-3 text-right ${
-                        grossProfit >= 0 ? "text-green-600" : "text-red-600"
-                      }`}
-                    >
-                      {formatCurrency(grossProfit)}
-                    </td>
-                    <td className="p-3 text-right">
-                      {grossMargin.toFixed(1)}%
-                    </td>
-                    <td />
-                  </tr>
-                </tfoot>
-              )}
-            </table>
+            {/* Charts row 2: Day-of-week + Reconciliation */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-sm">
+                    Average Revenue by Day of Week
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={dayOfWeekData}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="#f1f5f9"
+                      />
+                      <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                      <YAxis
+                        tick={{ fontSize: 11 }}
+                        tickFormatter={(v) =>
+                          `₵${(v / 1000).toFixed(1)}k`
+                        }
+                      />
+                      <Tooltip
+                        formatter={(v: number, _name, props) => [
+                          formatCurrency(v),
+                          `Avg (${(props.payload as { days: number }).days} trading day${(props.payload as { days: number }).days !== 1 ? "s" : ""})`,
+                        ]}
+                        contentStyle={{ borderRadius: "8px" }}
+                      />
+                      <Bar
+                        dataKey="avg"
+                        fill="#3b82f6"
+                        radius={[4, 4, 0, 0]}
+                        name="Avg Revenue"
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">
+                    Reconciliation Summary
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {filteredRecons.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">
+                      No reconciliations in period
+                    </p>
+                  ) : (
+                    <>
+                      <div className="flex gap-3">
+                        <div className="flex-1 bg-green-50 rounded-lg p-3 text-center">
+                          <p className="text-lg font-bold text-green-600">
+                            {balancedCount}
+                          </p>
+                          <p className="text-xs text-green-700">Balanced</p>
+                        </div>
+                        <div className="flex-1 bg-red-50 rounded-lg p-3 text-center">
+                          <p className="text-lg font-bold text-red-600">
+                            {flaggedCount}
+                          </p>
+                          <p className="text-xs text-red-700">Flagged</p>
+                        </div>
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-500">Cash variance</span>
+                          <span
+                            className={`font-semibold ${totalCashVariance > 0 ? "text-amber-600" : totalCashVariance < 0 ? "text-red-600" : "text-green-600"}`}
+                          >
+                            {totalCashVariance >= 0 ? "+" : ""}
+                            {formatCurrency(totalCashVariance)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-500">
+                            Mobile variance
+                          </span>
+                          <span
+                            className={`font-semibold ${totalMobileVariance > 0 ? "text-amber-600" : totalMobileVariance < 0 ? "text-red-600" : "text-green-600"}`}
+                          >
+                            {totalMobileVariance >= 0 ? "+" : ""}
+                            {formatCurrency(totalMobileVariance)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center border-t pt-2">
+                          <span className="text-slate-700 font-medium">
+                            Net variance
+                          </span>
+                          <span
+                            className={`font-bold ${totalCashVariance + totalMobileVariance > 0 ? "text-amber-600" : totalCashVariance + totalMobileVariance < 0 ? "text-red-600" : "text-green-600"}`}
+                          >
+                            {totalCashVariance + totalMobileVariance >= 0
+                              ? "+"
+                              : ""}
+                            {formatCurrency(
+                              totalCashVariance + totalMobileVariance,
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-400">
+                        Positive = surplus · Negative = shortfall
+                      </p>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </div>
-        </CardContent>
-      </Card>
+        )}
 
-      {/* Daily Sales Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Daily Sales Breakdown</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <div>
+        {/* ── Products ─────────────────────────────────────────────────────── */}
+        {activeTab === "products" && (
+          <div>
+            <p className="text-xs text-slate-400 mb-4">
+              Click a column header to sort. Showing {productProfitability.length} product{productProfitability.length !== 1 ? "s" : ""} with sales in this period.
+            </p>
+            <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-slate-50 border-b sticky top-0 z-10">
+                <thead className="bg-slate-50 border-b">
+                  <tr>
+                    <th className="text-left p-3 text-slate-500 font-medium">
+                      Product
+                    </th>
+                    <SortHeader col="revenue" label="Revenue" />
+                    <th className="text-right p-3 text-slate-500 font-medium whitespace-nowrap">
+                      COGS
+                    </th>
+                    <SortHeader col="profit" label="Gross Profit" />
+                    <SortHeader col="margin" label="Margin %" />
+                    <SortHeader col="qty" label="Qty Sold" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {productProfitability.map((p) => (
+                    <tr key={p.name} className="hover:bg-slate-50">
+                      <td className="p-3 font-medium">{p.name}</td>
+                      <td className="p-3 text-right">
+                        {formatCurrency(p.revenue)}
+                      </td>
+                      <td className="p-3 text-right text-slate-500">
+                        {formatCurrency(p.cogs)}
+                      </td>
+                      <td
+                        className={`p-3 text-right font-semibold ${p.profit >= 0 ? "text-green-600" : "text-red-600"}`}
+                      >
+                        {formatCurrency(p.profit)}
+                      </td>
+                      <td
+                        className={`p-3 text-right ${p.margin >= 20 ? "text-green-600" : p.margin >= 10 ? "text-amber-600" : "text-red-600"}`}
+                      >
+                        {p.margin.toFixed(1)}%
+                      </td>
+                      <td className="p-3 text-right text-slate-500 whitespace-nowrap">
+                        {qtyLabel(p.qty, p.unit_type)}
+                      </td>
+                    </tr>
+                  ))}
+                  {productProfitability.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="text-center py-8 text-muted-foreground"
+                      >
+                        No sales in this period
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+                {productProfitability.length > 0 && (
+                  <tfoot className="border-t font-semibold bg-slate-50">
+                    <tr>
+                      <td className="p-3">Total</td>
+                      <td className="p-3 text-right">
+                        {formatCurrency(totalRevenue)}
+                      </td>
+                      <td className="p-3 text-right text-slate-500">
+                        {formatCurrency(totalCOGS)}
+                      </td>
+                      <td
+                        className={`p-3 text-right ${grossProfit >= 0 ? "text-green-600" : "text-red-600"}`}
+                      >
+                        {formatCurrency(grossProfit)}
+                      </td>
+                      <td className="p-3 text-right">
+                        {grossMargin.toFixed(1)}%
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Daily Detail ──────────────────────────────────────────────────── */}
+        {activeTab === "daily" && (
+          <div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b">
                   <tr>
                     <th className="text-left p-3 font-medium text-slate-600 whitespace-nowrap">
                       Day
@@ -939,7 +1136,10 @@ export function ReportsClient({
                       Mobile Money
                     </th>
                     <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">
-                      Credit
+                      Credit Issued
+                    </th>
+                    <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">
+                      Repayments
                     </th>
                     <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">
                       Expenses
@@ -983,6 +1183,13 @@ export function ReportsClient({
                         <td className="p-3 text-right text-purple-700">
                           {row.credit > 0 ? (
                             formatCurrency(row.credit)
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-right text-green-700">
+                          {row.repayments > 0 ? (
+                            formatCurrency(row.repayments)
                           ) : (
                             <span className="text-slate-300">—</span>
                           )}
@@ -1039,7 +1246,7 @@ export function ReportsClient({
                   {dailyTableData.length === 0 && (
                     <tr>
                       <td
-                        colSpan={8}
+                        colSpan={9}
                         className="text-center py-10 text-muted-foreground"
                       >
                         No activity in this period
@@ -1059,6 +1266,9 @@ export function ReportsClient({
                       </td>
                       <td className="p-3 text-right text-purple-700">
                         {formatCurrency(creditRevenue)}
+                      </td>
+                      <td className="p-3 text-right text-green-700">
+                        {formatCurrency(periodCreditPaid)}
                       </td>
                       <td className="p-3 text-right text-amber-700">
                         {formatCurrency(totalExpenses)}
@@ -1084,8 +1294,8 @@ export function ReportsClient({
               </table>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        )}
+      </div>
     </div>
   );
 }

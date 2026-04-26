@@ -56,4 +56,9 @@
   body {
     @apply bg-background text-foreground;
   }
+  thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
 }
