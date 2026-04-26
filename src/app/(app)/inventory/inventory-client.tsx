@@ -39,6 +39,8 @@ const emptyProduct = {
   variance_threshold_pct: "5",
   // Opening stock (only used on create)
   opening_qty: "", opening_boxes: "", opening_cost: "",
+  // WAC override (only used on edit)
+  override_wac: "",
 };
 
 const emptyRestock = {
@@ -178,9 +180,14 @@ export function InventoryClient({ products: initial, categories }: { products: P
     };
 
     if (editProduct) {
+      const wacOverride = parseFloat(productForm.override_wac);
+      const updatePayload = {
+        ...payload,
+        ...(wacOverride > 0 ? { weighted_avg_cost: wacOverride } : {}),
+      };
       const { data, error } = await supabase
         .from("products")
-        .update(payload)
+        .update(updatePayload)
         .eq("id", editProduct.id)
         .select(`id, name, unit_type, units_per_box, current_stock_kg, current_stock_units, current_stock_boxes, weighted_avg_cost, selling_price, low_stock_threshold, variance_threshold_pct, is_active, created_at, category:categories(id, name)`)
         .single();
@@ -191,7 +198,8 @@ export function InventoryClient({ products: initial, categories }: { products: P
         setProducts(products.map((p) => p.id === editProduct.id ? data as unknown as Product : p));
         await supabase.from("audit_logs").insert({
           user_id: profile!.id, action: "UPDATE_PRODUCT",
-          entity_type: "products", entity_id: editProduct.id, new_value: payload,
+          entity_type: "products", entity_id: editProduct.id,
+          new_value: { ...payload, ...(wacOverride > 0 ? { weighted_avg_cost_override: wacOverride } : {}) },
         });
         toast({ title: "Product updated" });
       }
@@ -656,6 +664,25 @@ export function InventoryClient({ products: initial, categories }: { products: P
                 />
               </div>
             </div>
+
+            {/* WAC Override — only shown when editing */}
+            {editProduct && (
+              <div className="border rounded-lg p-3 bg-amber-50 border-amber-200 space-y-2">
+                <div>
+                  <p className="text-sm font-medium text-amber-800">Override Average Cost</p>
+                  <p className="text-xs text-amber-600 mt-0.5">
+                    Current: {formatCurrency(editProduct.weighted_avg_cost)} — leave blank to keep unchanged. The next restock will blend from whatever value you set here.
+                  </p>
+                </div>
+                <Input
+                  type="number" min="0" step="0.01"
+                  value={productForm.override_wac}
+                  onChange={(e) => setProductForm({ ...productForm, override_wac: e.target.value })}
+                  placeholder="New cost price..."
+                  className="bg-white"
+                />
+              </div>
+            )}
 
             {/* Opening Stock — only shown when creating */}
             {!editProduct && (

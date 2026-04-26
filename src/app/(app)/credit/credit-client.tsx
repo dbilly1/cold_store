@@ -164,6 +164,26 @@ export function CreditClient({
   });
   const [deleteCustomerSaving, setDeleteCustomerSaving] = useState(false);
 
+  // Edit payment dialog
+  const [editPaymentDialog, setEditPaymentDialog] = useState({
+    open: false,
+    id: "",
+    amount: "",
+    method: "cash" as "cash" | "mobile_money",
+    date: "",
+    notes: "",
+    collectedAtTill: false,
+  });
+  const [editPaymentSaving, setEditPaymentSaving] = useState(false);
+
+  // Delete payment dialog
+  const [deletePaymentDialog, setDeletePaymentDialog] = useState({
+    open: false,
+    id: "",
+    amount: 0,
+  });
+  const [deletePaymentSaving, setDeletePaymentSaving] = useState(false);
+
   // Per-customer aggregates
   function getBalance(customerId: string) {
     const totalCredit = creditSales
@@ -449,6 +469,86 @@ export function CreditClient({
     toast({ title: "Customer deleted" });
     setDeleteCustomerDialog((p) => ({ ...p, open: false }));
     setDeleteCustomerSaving(false);
+  }
+
+  async function handleEditPayment() {
+    const amt = parseFloat(editPaymentDialog.amount);
+    if (!amt || amt <= 0) {
+      toast({ title: "Enter a valid amount", variant: "destructive" });
+      return;
+    }
+    setEditPaymentSaving(true);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("credit_payments")
+      .update({
+        amount: amt,
+        payment_method: editPaymentDialog.method,
+        payment_date: editPaymentDialog.date,
+        notes: editPaymentDialog.notes || null,
+        collected_at_till: editPaymentDialog.collectedAtTill,
+      })
+      .eq("id", editPaymentDialog.id);
+
+    if (error) {
+      toast({ title: "Failed to update payment", description: error.message, variant: "destructive" });
+      setEditPaymentSaving(false);
+      return;
+    }
+
+    await supabase.from("audit_logs").insert({
+      user_id: profile!.id,
+      action: "UPDATE_CREDIT_PAYMENT",
+      entity_type: "credit_payments",
+      entity_id: editPaymentDialog.id,
+      new_value: { amount: amt, payment_method: editPaymentDialog.method, payment_date: editPaymentDialog.date },
+    });
+
+    setPayments((prev) =>
+      prev.map((p) =>
+        p.id === editPaymentDialog.id
+          ? {
+              ...p,
+              amount: amt,
+              payment_method: editPaymentDialog.method,
+              payment_date: editPaymentDialog.date,
+              notes: editPaymentDialog.notes || null,
+              collected_at_till: editPaymentDialog.collectedAtTill,
+            }
+          : p,
+      ),
+    );
+    toast({ title: "Payment updated" });
+    setEditPaymentDialog((p) => ({ ...p, open: false }));
+    setEditPaymentSaving(false);
+  }
+
+  async function handleDeletePayment() {
+    setDeletePaymentSaving(true);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("credit_payments")
+      .delete()
+      .eq("id", deletePaymentDialog.id);
+
+    if (error) {
+      toast({ title: "Failed to delete payment", description: error.message, variant: "destructive" });
+      setDeletePaymentSaving(false);
+      return;
+    }
+
+    await supabase.from("audit_logs").insert({
+      user_id: profile!.id,
+      action: "DELETE_CREDIT_PAYMENT",
+      entity_type: "credit_payments",
+      entity_id: deletePaymentDialog.id,
+      new_value: { amount: deletePaymentDialog.amount },
+    });
+
+    setPayments((prev) => prev.filter((p) => p.id !== deletePaymentDialog.id));
+    toast({ title: "Payment deleted" });
+    setDeletePaymentDialog((p) => ({ ...p, open: false }));
+    setDeletePaymentSaving(false);
   }
 
   // ── Render ──────────────────────────────────────────────────────────
@@ -785,6 +885,43 @@ export function CreditClient({
                                 </td>
                                 <td className="p-3 text-center text-slate-400">
                                   {isSale && (isExpanded ? <ChevronUp className="h-4 w-4 inline" /> : <ChevronDown className="h-4 w-4 inline" />)}
+                                  {!isSale && payment && (
+                                    <div
+                                      className="flex items-center justify-end gap-0.5"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <button
+                                        className="p-1.5 rounded hover:bg-slate-100 text-slate-300 hover:text-slate-600 transition-colors"
+                                        title="Edit payment"
+                                        onClick={() =>
+                                          setEditPaymentDialog({
+                                            open: true,
+                                            id: payment.id,
+                                            amount: payment.amount.toString(),
+                                            method: payment.payment_method as "cash" | "mobile_money",
+                                            date: payment.payment_date,
+                                            notes: payment.notes ?? "",
+                                            collectedAtTill: payment.collected_at_till,
+                                          })
+                                        }
+                                      >
+                                        <Pencil className="h-3.5 w-3.5" />
+                                      </button>
+                                      <button
+                                        className="p-1.5 rounded hover:bg-red-50 text-slate-300 hover:text-red-500 transition-colors"
+                                        title="Delete payment"
+                                        onClick={() =>
+                                          setDeletePaymentDialog({
+                                            open: true,
+                                            id: payment.id,
+                                            amount: payment.amount,
+                                          })
+                                        }
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
+                                  )}
                                 </td>
                               </tr>
 
@@ -1078,6 +1215,146 @@ export function CreditClient({
               disabled={deleteCustomerSaving}
             >
               {deleteCustomerSaving ? "Deleting..." : "Delete Customer"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Edit Payment Dialog ── */}
+      <Dialog
+        open={editPaymentDialog.open}
+        onOpenChange={(o) => setEditPaymentDialog((p) => ({ ...p, open: o }))}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Payment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Amount (GHS)</Label>
+              <Input
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={editPaymentDialog.amount}
+                onChange={(e) =>
+                  setEditPaymentDialog((p) => ({ ...p, amount: e.target.value }))
+                }
+                placeholder="0.00"
+                autoFocus
+              />
+            </div>
+            <div>
+              <Label>Payment Method</Label>
+              <Select
+                value={editPaymentDialog.method}
+                onValueChange={(v) =>
+                  setEditPaymentDialog((p) => ({
+                    ...p,
+                    method: v as "cash" | "mobile_money",
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="mobile_money">Mobile Money</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Date</Label>
+              <Input
+                type="date"
+                value={editPaymentDialog.date}
+                onChange={(e) =>
+                  setEditPaymentDialog((p) => ({ ...p, date: e.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <Label>Notes (optional)</Label>
+              <Input
+                value={editPaymentDialog.notes}
+                onChange={(e) =>
+                  setEditPaymentDialog((p) => ({ ...p, notes: e.target.value }))
+                }
+                placeholder="Any notes..."
+              />
+            </div>
+            <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer hover:bg-slate-50 select-none">
+              <input
+                type="checkbox"
+                className="mt-0.5 rounded"
+                checked={editPaymentDialog.collectedAtTill}
+                onChange={(e) =>
+                  setEditPaymentDialog((p) => ({
+                    ...p,
+                    collectedAtTill: e.target.checked,
+                  }))
+                }
+              />
+              <div>
+                <p className="text-sm font-medium text-slate-800">
+                  Received at shop
+                </p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {editPaymentDialog.method === "cash"
+                    ? "Tick this if the cash is physically in the till."
+                    : "Tick this if the payment was sent to the shop's mobile account."}
+                  {" "}
+                  This will include it in daily reconciliation.
+                </p>
+              </div>
+            </label>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEditPaymentDialog((p) => ({ ...p, open: false }))}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleEditPayment} disabled={editPaymentSaving}>
+              {editPaymentSaving ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Delete Payment Dialog ── */}
+      <Dialog
+        open={deletePaymentDialog.open}
+        onOpenChange={(o) => setDeletePaymentDialog((p) => ({ ...p, open: o }))}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Payment</DialogTitle>
+          </DialogHeader>
+          <div className="py-2 space-y-2">
+            <p className="text-sm text-slate-700">
+              Are you sure you want to delete this payment of{" "}
+              <span className="font-semibold">{formatCurrency(deletePaymentDialog.amount)}</span>?
+            </p>
+            <p className="text-xs text-slate-500">
+              This will adjust the customer&apos;s outstanding balance accordingly.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeletePaymentDialog((p) => ({ ...p, open: false }))}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeletePayment}
+              disabled={deletePaymentSaving}
+            >
+              {deletePaymentSaving ? "Deleting..." : "Delete Payment"}
             </Button>
           </DialogFooter>
         </DialogContent>
