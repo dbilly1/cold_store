@@ -1,10 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
+import { requireRole } from "@/lib/require-role";
 import { TopBar } from "@/components/layout/top-bar";
 import { AdjustmentsClient } from "./adjustments-client";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdjustmentsPage() {
+  await requireRole(["supervisor", "admin"]);
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   const { data: profile } = await supabase.from("profiles").select("role").eq("id", user!.id).single();

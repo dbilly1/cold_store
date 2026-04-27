@@ -7,9 +7,10 @@ import { useProfile } from "@/hooks/use-profile";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Plus, Trash2, Settings, Tag } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Plus, Trash2 } from "lucide-react";
 
 interface Config { id: string; key: string; value: string; description: string | null; }
 interface Category { id: string; name: string; description: string | null; }
@@ -66,61 +67,61 @@ export function SettingsClient({ config: initial, categories: initialCats }: { c
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-4xl">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6">
+      <Tabs defaultValue="system">
+        <TabsList>
+          <TabsTrigger value="system">System</TabsTrigger>
+          <TabsTrigger value="categories">Categories</TabsTrigger>
+        </TabsList>
 
-        {/* System Config */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Settings className="h-4 w-4 text-blue-500" />
-              System Configuration
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {config.map((c) => (
-              <ConfigRow
-                key={c.key}
-                config={c}
-                label={CONFIG_LABELS[c.key] ?? c.key}
-                saving={saving === c.key}
-                onSave={(value) => saveConfig(c.key, value)}
-              />
-            ))}
-          </CardContent>
-        </Card>
-
-        {/* Categories */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Tag className="h-4 w-4 text-purple-500" />
-              Product Categories
-            </CardTitle>
-            <Button size="sm" onClick={() => setCatDialog(true)}>
-              <Plus className="h-3.5 w-3.5 mr-1" /> Add
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {categories.map((cat) => (
-                <div key={cat.id} className="flex items-center justify-between p-2 rounded-lg border hover:bg-slate-50">
-                  <div>
-                    <p className="text-sm font-medium">{cat.name}</p>
-                    {cat.description && <p className="text-xs text-muted-foreground">{cat.description}</p>}
-                  </div>
-                  <Button size="sm" variant="ghost" className="h-7 text-red-500 hover:text-red-700" onClick={() => deleteCategory(cat.id)}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
+        {/* ── System Config ── */}
+        <TabsContent value="system">
+          <Card>
+            <CardContent className="pt-6 space-y-4 max-w-sm">
+              {config.map((c) => (
+                <ConfigRow
+                  key={c.key}
+                  config={c}
+                  label={CONFIG_LABELS[c.key] ?? c.key}
+                  saving={saving === c.key}
+                  onSave={(value) => saveConfig(c.key, value)}
+                />
               ))}
-              {categories.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-4">No categories</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Categories ── */}
+        <TabsContent value="categories">
+          <Card>
+            <CardContent className="pt-6 max-w-sm">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm font-medium text-slate-700">Product Categories</p>
+                <Button size="sm" onClick={() => setCatDialog(true)}>
+                  <Plus className="h-3.5 w-3.5 mr-1" /> Add
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {categories.map((cat) => (
+                  <div key={cat.id} className="flex items-center justify-between p-2 rounded-lg border hover:bg-slate-50">
+                    <div>
+                      <p className="text-sm font-medium">{cat.name}</p>
+                      {cat.description && <p className="text-xs text-muted-foreground">{cat.description}</p>}
+                    </div>
+                    <Button size="sm" variant="ghost" className="h-7 text-red-500 hover:text-red-700" onClick={() => deleteCategory(cat.id)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+                {categories.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">No categories</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+      </Tabs>
 
       <Dialog open={catDialog} onOpenChange={setCatDialog}>
         <DialogContent className="max-w-sm">

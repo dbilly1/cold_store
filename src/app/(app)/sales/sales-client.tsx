@@ -4,11 +4,7 @@ import React, { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProfile } from "@/hooks/use-profile";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatCurrency, formatDateTime } from "@/lib/utils";
-import { Pencil, Trash2 } from "lucide-react";
 import type { DailySummary } from "./page";
 import type {
   Product,
@@ -107,7 +103,7 @@ export function SalesClient({
   const isSalesperson = userRole === "salesperson";
   const canBulkEntry = profile?.role !== "salesperson";
   const activeSales = sales.filter((s) => !s.is_deleted);
-  const dailyTotal = activeSales.reduce((s, sale) => s + sale.total_amount, 0);
+
 
   // ── openDay ──────────────────────────────────
   async function openDay(date: string) {
@@ -419,128 +415,28 @@ export function SalesClient({
 
       {/* ── Right panel ── */}
       <div className="flex-1 lg:overflow-y-auto p-4 md:p-6">
-        {/* ─ Salesperson: today's sales cards ─ */}
+        {/* ─ Salesperson: today's sales table ─ */}
         {isSalesperson && (
-          <>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-semibold text-slate-700">
-                Today&apos;s Sales
-                <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  ({activeSales.length} transaction
-                  {activeSales.length !== 1 ? "s" : ""})
-                </span>
-              </h2>
-              <div className="text-right">
-                <p className="text-sm text-muted-foreground">Total</p>
-                <p className="text-xl font-bold text-blue-600">
-                  {formatCurrency(dailyTotal)}
-                </p>
-              </div>
-            </div>
-            {activeSales.length === 0 ? (
-              <div className="flex items-center justify-center h-48 text-muted-foreground">
-                No sales recorded today
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {activeSales.map((sale) => (
-                  <Card key={sale.id} className="overflow-hidden">
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="font-semibold">
-                              {formatCurrency(sale.total_amount)}
-                            </span>
-                            <Badge
-                              variant={
-                                sale.payment_method === "cash"
-                                  ? "secondary"
-                                  : "outline"
-                              }
-                            >
-                              {sale.payment_method === "cash"
-                                ? "Cash"
-                                : sale.payment_method === "mobile_money"
-                                ? "Mobile Money"
-                                : "Credit"}
-                            </Badge>
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            {formatDateTime(sale.created_at)} ·{" "}
-                            {
-                              (
-                                sale.recorded_by_profile as {
-                                  full_name: string;
-                                } | null
-                              )?.full_name
-                            }
-                          </p>
-                          <div className="mt-2 space-y-0.5">
-                            {sale.items?.map((item) => (
-                              <p
-                                key={item.id}
-                                className="text-xs text-slate-600"
-                              >
-                                {
-                                  (
-                                    item.product as {
-                                      name: string;
-                                      unit_type: string;
-                                    } | null
-                                  )?.name
-                                }{" "}
-                                ·{" "}
-                                {item.quantity_kg > 0
-                                  ? `${item.quantity_kg} kg`
-                                  : item.quantity_units > 0
-                                  ? `${item.quantity_units} units`
-                                  : `${item.quantity_boxes} boxes`}
-                                {item.quantity_boxes > 0 &&
-                                (item.quantity_kg > 0 ||
-                                  item.quantity_units > 0)
-                                  ? ` + ${item.quantity_boxes} boxes`
-                                  : ""}{" "}
-                                · {formatCurrency(item.line_total)}
-                              </p>
-                            ))}
-                          </div>
-                        </div>
-                        {(profile?.role === "salesperson" ||
-                          profile?.role === "supervisor" ||
-                          profile?.role === "admin") && (
-                          <div className="flex items-center gap-1">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="text-slate-400 hover:text-slate-700"
-                              onClick={() => openEditDialog(sale)}
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                              onClick={() =>
-                                setDeleteDialog({
-                                  open: true,
-                                  saleId: sale.id,
-                                  reason: "",
-                                })
-                              }
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </>
+          <SalesDrilldown
+            selectedDate={today}
+            dayDetails={activeSales}
+            loadingDay={false}
+            expandedBatches={expandedBatches}
+            profile={profile}
+            hideBack
+            onBack={() => {}}
+            onToggleBatch={(batchId) =>
+              setExpandedBatches((prev) => {
+                const next = new Set(prev);
+                next.has(batchId) ? next.delete(batchId) : next.add(batchId);
+                return next;
+              })
+            }
+            onEdit={openEditDialog}
+            onDelete={(saleId) =>
+              setDeleteDialog({ open: true, saleId, reason: "" })
+            }
+          />
         )}
 
         {/* ─ Non-salesperson: daily summary table ─ */}

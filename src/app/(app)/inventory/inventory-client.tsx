@@ -409,7 +409,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
       selling_price: product.selling_price.toString(),
       low_stock_threshold: product.low_stock_threshold.toString(),
       variance_threshold_pct: product.variance_threshold_pct.toString(),
-      opening_qty: "", opening_boxes: "", opening_cost: "",
+      opening_qty: "", opening_boxes: "", opening_cost: "", override_wac: "",
     });
     setProductDialog(true);
   };

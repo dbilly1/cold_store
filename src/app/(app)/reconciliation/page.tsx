@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { requireRole } from "@/lib/require-role";
 import { TopBar } from "@/components/layout/top-bar";
 import { ReconciliationClient } from "./reconciliation-client";
 import { format } from "date-fns";
@@ -36,6 +37,7 @@ export default async function ReconciliationPage({
 }: {
   searchParams: Promise<{ page?: string; pageSize?: string }>;
 }) {
+  await requireRole(["supervisor", "accountant", "admin"]);
   const params = await searchParams;
   const page = Math.max(0, parseInt(params?.page ?? "0") || 0);
   const pageSize = Math.max(1, parseInt(params?.pageSize ?? String(DEFAULT_PAGE_SIZE)) || DEFAULT_PAGE_SIZE);
@@ -71,8 +73,8 @@ export default async function ReconciliationPage({
 
   // Step 1: get all distinct dates from both sales and reconciliations (lightweight)
   const [{ data: allSaleDateRows }, { data: allReconDateRows }] = await Promise.all([
-    supabase.from("sales").select("sale_date").eq("is_deleted", false).limit(50000),
-    supabase.from("daily_reconciliations").select("reconciliation_date").limit(10000),
+    supabase.from("sales").select("sale_date").eq("is_deleted", false).order("sale_date", { ascending: false }).limit(50000),
+    supabase.from("daily_reconciliations").select("reconciliation_date").order("reconciliation_date", { ascending: false }).limit(10000),
   ]);
 
   const allDates = [...new Set([

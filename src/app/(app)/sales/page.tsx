@@ -76,6 +76,7 @@ export default async function SalesPage({
       .from("sales")
       .select("sale_date")
       .eq("is_deleted", false)
+      .order("sale_date", { ascending: false })
       .limit(50000);
 
     const allDates = [...new Set((allDateRows ?? []).map((r: { sale_date: string }) => r.sale_date))]

@@ -1,10 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
+import { requireRole } from "@/lib/require-role";
 import { TopBar } from "@/components/layout/top-bar";
 import { InventoryClient } from "./inventory-client";
 
 export const dynamic = "force-dynamic";
 
 export default async function InventoryPage() {
+  await requireRole(["supervisor", "accountant", "admin"]);
   const supabase = await createClient();
 
   const [{ data: products }, { data: categories }] = await Promise.all([

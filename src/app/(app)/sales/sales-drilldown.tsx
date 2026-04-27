@@ -24,6 +24,7 @@ interface SalesDrilldownProps {
   onToggleBatch: (batchId: string) => void;
   onEdit: (sale: ExistingSale) => void;
   onDelete: (saleId: string) => void;
+  hideBack?: boolean;
 }
 
 export function SalesDrilldown({
@@ -36,7 +37,12 @@ export function SalesDrilldown({
   onToggleBatch,
   onEdit,
   onDelete,
+  hideBack = false,
 }: SalesDrilldownProps) {
+  const canEdit =
+    profile?.role === "salesperson" ||
+    profile?.role === "supervisor" ||
+    profile?.role === "admin";
   const canDelete =
     profile?.role === "supervisor" || profile?.role === "admin";
 
@@ -65,7 +71,7 @@ export function SalesDrilldown({
           <th className="text-left px-4 py-3 font-medium text-slate-600 w-36">
             Recorded by
           </th>
-          {canDelete && <th className="w-20" />}
+          {(canEdit || canDelete) && <th className="w-20" />}
         </tr>
       </thead>
       <tbody className="divide-y">
@@ -137,25 +143,29 @@ export function SalesDrilldown({
               {(sale.recorded_by_profile as { full_name: string } | null)
                 ?.full_name ?? "—"}
             </td>
-            {canDelete && (
+            {(canEdit || canDelete) && (
               <td className="px-2 py-3">
                 <div className="flex items-center gap-0.5">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-slate-400 hover:text-slate-700 h-7 w-7 p-0"
-                    onClick={() => onEdit(sale)}
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-red-400 hover:text-red-600 hover:bg-red-50 h-7 w-7 p-0"
-                    onClick={() => onDelete(sale.id)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                  {canEdit && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-slate-400 hover:text-slate-700 h-7 w-7 p-0"
+                      onClick={() => onEdit(sale)}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                  {canDelete && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-400 hover:text-red-600 hover:bg-red-50 h-7 w-7 p-0"
+                      onClick={() => onDelete(sale.id)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
                 </div>
               </td>
             )}
@@ -185,14 +195,11 @@ export function SalesDrilldown({
     <>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-1"
-            onClick={onBack}
-          >
-            <ChevronLeft className="h-4 w-4" /> Back
-          </Button>
+          {!hideBack && (
+            <Button variant="ghost" size="sm" className="gap-1" onClick={onBack}>
+              <ChevronLeft className="h-4 w-4" /> Back
+            </Button>
+          )}
           <div>
             <h2 className="font-semibold text-slate-700">
               {formatDate(selectedDate)}

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { requireRole } from "@/lib/require-role";
 import { TopBar } from "@/components/layout/top-bar";
 import { ReportsClient } from "./reports-client";
 import { format, subDays } from "date-fns";
@@ -6,6 +7,7 @@ import { format, subDays } from "date-fns";
 export const dynamic = "force-dynamic";
 
 export default async function ReportsPage() {
+  await requireRole(["supervisor", "accountant", "admin"]);
   const supabase = await createClient();
   // Fetch one year so the client date-picker has real data for any reasonable range
   const oneYearAgo = format(subDays(new Date(), 365), "yyyy-MM-dd");
