@@ -16,10 +16,8 @@ function StatusBanner() {
   const searchParams = useSearchParams();
   const { toast } = useToast();
   const reason = searchParams.get("reason");
-  const error = searchParams.get("error");
   const timedOut = reason === "timeout";
   const passwordChanged = reason === "password_changed";
-  const invalidLink = error === "invalid_link";
 
   useEffect(() => {
     if (timedOut) {
@@ -42,13 +40,6 @@ function StatusBanner() {
     <div className="mx-6 mb-2 flex items-center gap-2 rounded-md bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-700">
       <ShieldCheck className="h-4 w-4 flex-shrink-0" />
       Password updated. All sessions have been signed out. Please sign in again.
-    </div>
-  );
-
-  if (invalidLink) return (
-    <div className="mx-6 mb-2 flex items-center gap-2 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-      <ShieldCheck className="h-4 w-4 flex-shrink-0" />
-      That reset link is invalid or has expired. Please request a new one.
     </div>
   );
 
@@ -127,12 +118,7 @@ export default function LoginPage() {
               />
             </div>
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password">Password</Label>
-                <Link href="/forgot-password" className="text-xs text-primary hover:underline">
-                  Forgot password?
-                </Link>
-              </div>
+              <Label htmlFor="password">Password</Label>
               <div className="relative">
                 <Input
                   id="password"
