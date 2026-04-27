@@ -1,11 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/layout/top-bar";
 import { SalesClient } from "./sales-client";
-import { format, subDays } from "date-fns";
+import { format } from "date-fns";
 
 export const dynamic = "force-dynamic";
 
-const PAGE_SIZE = 30;
+const DEFAULT_PAGE_SIZE = 30;
 
 export interface DailySummary {
   date: string;
@@ -20,16 +20,14 @@ export interface DailySummary {
 export default async function SalesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{ page?: string; pageSize?: string }>;
 }) {
   const params = await searchParams;
   const page = Math.max(0, parseInt(params?.page ?? "0") || 0);
+  const pageSize = Math.max(1, parseInt(params?.pageSize ?? String(DEFAULT_PAGE_SIZE)) || DEFAULT_PAGE_SIZE);
 
   const supabase = await createClient();
   const today = format(new Date(), "yyyy-MM-dd");
-  // Page 0: [today-29, today], Page 1: [today-59, today-30], etc.
-  const rangeEnd = format(subDays(new Date(), page * PAGE_SIZE), "yyyy-MM-dd");
-  const rangeStart = format(subDays(new Date(), (page + 1) * PAGE_SIZE - 1), "yyyy-MM-dd");
 
   // Current user role
   const { data: { user } } = await supabase.auth.getUser();
@@ -70,59 +68,57 @@ export default async function SalesPage({
     .order("full_name");
 
   let dailySummaries: DailySummary[] = [];
-  let hasMore = false;
+  let total = 0;
 
   if (!isSalesperson) {
-    const [
-      { data: allSales },
-      { data: reconciliations },
-      { count: olderCount },
-    ] = await Promise.all([
-      supabase
-        .from("sales")
-        .select("sale_date, total_amount, payment_method")
-        .eq("is_deleted", false)
-        .gte("sale_date", rangeStart)
-        .lte("sale_date", rangeEnd)
-        .order("sale_date", { ascending: false })
-        .limit(5000),
+    // Step 1: get all distinct sale dates (lightweight — just date strings)
+    const { data: allDateRows } = await supabase
+      .from("sales")
+      .select("sale_date")
+      .eq("is_deleted", false)
+      .limit(50000);
 
-      supabase
-        .from("daily_reconciliations")
-        .select("reconciliation_date, cash_variance, mobile_variance")
-        .gte("reconciliation_date", rangeStart)
-        .lte("reconciliation_date", rangeEnd),
+    const allDates = [...new Set((allDateRows ?? []).map((r: { sale_date: string }) => r.sale_date))]
+      .sort((a, b) => b.localeCompare(a));
+    total = allDates.length;
 
-      supabase
-        .from("sales")
-        .select("id", { count: "exact", head: true })
-        .eq("is_deleted", false)
-        .lt("sale_date", rangeStart),
-    ]);
+    const pageDates = allDates.slice(page * pageSize, (page + 1) * pageSize);
 
-    hasMore = (olderCount ?? 0) > 0;
+    if (pageDates.length > 0) {
+      // Step 2: fetch sales + reconciliations only for this page's exact dates
+      const [{ data: allSales }, { data: reconciliations }] = await Promise.all([
+        supabase
+          .from("sales")
+          .select("sale_date, total_amount, payment_method")
+          .eq("is_deleted", false)
+          .in("sale_date", pageDates)
+          .limit(5000),
+        supabase
+          .from("daily_reconciliations")
+          .select("reconciliation_date, cash_variance, mobile_variance")
+          .in("reconciliation_date", pageDates),
+      ]);
 
-    const reconMap = new Map<string, { cash_variance: number; mobile_variance: number }>();
-    reconciliations?.forEach((r) => {
-      reconMap.set(r.reconciliation_date, {
-        cash_variance: r.cash_variance ?? 0,
-        mobile_variance: r.mobile_variance ?? 0,
+      const reconMap = new Map<string, { cash_variance: number; mobile_variance: number }>();
+      reconciliations?.forEach((r) => {
+        reconMap.set(r.reconciliation_date, {
+          cash_variance: r.cash_variance ?? 0,
+          mobile_variance: r.mobile_variance ?? 0,
+        });
       });
-    });
 
-    const byDate = new Map<string, { count: number; revenue: number; cash: number; mobile: number }>();
-    allSales?.forEach((s) => {
-      const ex = byDate.get(s.sale_date) ?? { count: 0, revenue: 0, cash: 0, mobile: 0 };
-      ex.count += 1;
-      ex.revenue += s.total_amount;
-      ex.cash += s.payment_method === "cash" ? s.total_amount : 0;
-      ex.mobile += s.payment_method === "mobile_money" ? s.total_amount : 0;
-      byDate.set(s.sale_date, ex);
-    });
+      const byDate = new Map<string, { count: number; revenue: number; cash: number; mobile: number }>();
+      allSales?.forEach((s) => {
+        const ex = byDate.get(s.sale_date) ?? { count: 0, revenue: 0, cash: 0, mobile: 0 };
+        ex.count += 1;
+        ex.revenue += s.total_amount;
+        ex.cash += s.payment_method === "cash" ? s.total_amount : 0;
+        ex.mobile += s.payment_method === "mobile_money" ? s.total_amount : 0;
+        byDate.set(s.sale_date, ex);
+      });
 
-    dailySummaries = Array.from(byDate.entries())
-      .sort(([a], [b]) => b.localeCompare(a))
-      .map(([date, sums]) => {
+      dailySummaries = pageDates.map((date) => {
+        const sums = byDate.get(date) ?? { count: 0, revenue: 0, cash: 0, mobile: 0 };
         const recon = reconMap.get(date);
         return {
           date,
@@ -131,6 +127,7 @@ export default async function SalesPage({
           mobile_variance: recon?.mobile_variance ?? null,
         };
       });
+    }
   }
 
   return (
@@ -143,7 +140,8 @@ export default async function SalesPage({
         dailySummaries={dailySummaries}
         customers={(customers ?? []) as never}
         page={page}
-        hasMore={hasMore}
+        pageSize={pageSize}
+        total={total}
       />
     </div>
   );

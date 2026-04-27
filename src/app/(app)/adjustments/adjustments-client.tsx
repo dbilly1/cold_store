@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProfile } from "@/hooks/use-profile";
@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { formatDateTime } from "@/lib/utils";
 import { Plus, CheckCircle, XCircle, AlertTriangle } from "lucide-react";
+import { TablePagination } from "@/components/ui/table-pagination";
 import type { AdjustmentReason } from "@/types/database";
 
 interface Product {
@@ -46,6 +47,8 @@ export function AdjustmentsClient({
   const { toast } = useToast();
   const { profile } = useProfile();
   const [adjustments, setAdjustments] = useState<Adjustment[]>(initial);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
   const [dialog, setDialog] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -145,6 +148,11 @@ export function AdjustmentsClient({
     toast({ title: approved ? "Adjustment approved" : "Adjustment rejected" });
   }
 
+  const pagedAdjustments = useMemo(
+    () => adjustments.slice(page * pageSize, (page + 1) * pageSize),
+    [adjustments, page, pageSize],
+  );
+
   const statusBadge = (status: string) => {
     if (status === "approved") return <Badge variant="success">Approved</Badge>;
     if (status === "rejected") return <Badge variant="destructive">Rejected</Badge>;
@@ -177,7 +185,7 @@ export function AdjustmentsClient({
             </tr>
           </thead>
           <tbody className="divide-y">
-            {adjustments.map((adj) => {
+            {pagedAdjustments.map((adj) => {
               const delta = adj.quantity_kg_delta !== 0 ? adj.quantity_kg_delta : adj.quantity_units_delta;
               const p = adj.product as { name: string; unit_type: string } | null;
               return (
@@ -216,6 +224,15 @@ export function AdjustmentsClient({
         </table>
         {adjustments.length === 0 && (
           <div className="text-center py-12 text-muted-foreground">No adjustments yet</div>
+        )}
+        {adjustments.length > 0 && (
+          <TablePagination
+            total={adjustments.length}
+            page={page}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(0); }}
+          />
         )}
       </div>
 

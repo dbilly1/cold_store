@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProfile } from "@/hooks/use-profile";
@@ -36,7 +35,8 @@ export function SalesClient({
   dailySummaries = [],
   customers: initialCustomers = [],
   page = 0,
-  hasMore = false,
+  pageSize = 30,
+  total = 0,
 }: {
   products: Product[];
   initialSales: ExistingSale[];
@@ -44,11 +44,11 @@ export function SalesClient({
   dailySummaries?: DailySummary[];
   customers?: Customer[];
   page?: number;
-  hasMore?: boolean;
+  pageSize?: number;
+  total?: number;
 }) {
   const { toast } = useToast();
   const { profile } = useProfile();
-  const router = useRouter();
 
   // ── Shared state ─────────────────────────────
   const [sales, setSales] = useState<ExistingSale[]>(initialSales);
@@ -102,9 +102,6 @@ export function SalesClient({
   useEffect(() => {
     setLocalDailySummaries(dailySummaries);
   }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  function handleOlderPage() { router.push(`?page=${page + 1}`); }
-  function handleNewerPage() { router.push(`?page=${page - 1}`); }
 
   const today = new Date().toISOString().split("T")[0];
   const isSalesperson = userRole === "salesperson";
@@ -553,9 +550,8 @@ export function SalesClient({
             today={today}
             onRowClick={openDay}
             page={page}
-            hasMore={hasMore}
-            onOlderPage={handleOlderPage}
-            onNewerPage={handleNewerPage}
+            pageSize={pageSize}
+            total={total}
           />
         )}
 

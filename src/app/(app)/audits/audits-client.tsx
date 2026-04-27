@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type JSX } from "react";
+import React, { useState, useMemo, type JSX } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProfile } from "@/hooks/use-profile";
@@ -11,7 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate } from "@/lib/utils";
-import { Plus, ClipboardList, CheckCircle, ChevronLeft, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Plus, ClipboardList, CheckCircle, ChevronLeft, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
+import { TablePagination } from "@/components/ui/table-pagination";
 import type { AuditType } from "@/types/database";
 
 interface Product {
@@ -111,6 +112,9 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
   const { profile } = useProfile();
   const [audits, setAudits] = useState<Audit[]>(initial);
   const [activeAudit, setActiveAudit] = useState<Audit | null>(null);
+  const [expandedAuditId, setExpandedAuditId] = useState<string | null>(null);
+  const [auditPage, setAuditPage] = useState(0);
+  const [auditPageSize, setAuditPageSize] = useState(25);
   const [auditType, setAuditType] = useState<AuditType>("full");
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [physicalCounts, setPhysicalCounts] = useState<Counts>({});
@@ -552,84 +556,134 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
         {/* Audit History */}
         <div className="lg:col-span-2">
           <h3 className="font-semibold mb-3 text-slate-700">Audit History</h3>
-          <div className="space-y-3">
-            {audits.filter(a => a.status === "completed").map((audit) => (
-              <Card key={audit.id}>
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium">{formatDate(audit.audit_date)}</p>
-                        <Badge variant="outline" className="capitalize text-xs">{audit.audit_type}</Badge>
-                        {statusBadge(audit.status)}
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        by {(audit.conducted_by_profile as { full_name: string } | null)?.full_name}
-                      </p>
-                      {audit.items?.length > 0 && auditSummaryPill(audit.items)}
-                    </div>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b">
-                          <th className="text-left py-1 text-slate-500">Product</th>
-                          <th className="text-right py-1 text-slate-500">System</th>
-                          <th className="text-right py-1 text-slate-500">Physical</th>
-                          <th className="text-right py-1 text-slate-500">Variance</th>
-                          <th className="text-center py-1 text-slate-500">%</th>
-                          <th className="text-center py-1 text-slate-500">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {audit.items?.map((item) => {
-                          const p = item.product as { name: string; unit_type: string } | null;
-                          const isKg    = p?.unit_type === "kg";
-                          const isBoxes = p?.unit_type === "boxes";
-                          const system   = isBoxes ? item.system_stock_boxes   : isKg ? item.system_stock_kg   : item.system_stock_units;
-                          const physical = isBoxes ? item.physical_stock_boxes : isKg ? item.physical_stock_kg : item.physical_stock_units;
-                          // Always derive variance from saved physical − system (variance_kg/units are never persisted)
-                          const variance = physical - system;
-                          const unit     = isKg ? " kg" : isBoxes ? " box" : " u";
-                          // Use the stored within_threshold + variance_pct for severity (respects per-product threshold)
-                          const hsev: ItemSeverity = item.variance_pct === 0
-                            ? "matched"
-                            : item.within_threshold
-                            ? "ok"
-                            : item.variance_pct <= 15
-                            ? "amber"
-                            : "red";
-                          const hcfg = SEVERITY_CONFIG[hsev];
-                          return (
-                            <tr key={item.id} className={hcfg.rowBg}>
-                              <td className="py-1.5 font-medium">{p?.name}</td>
-                              <td className="text-right py-1.5 font-mono">{Number(system).toFixed(isKg ? 3 : 0)}{unit}</td>
-                              <td className="text-right py-1.5 font-mono">{Number(physical).toFixed(isKg ? 3 : 0)}{unit}</td>
-                              <td className={`text-right py-1.5 font-mono font-medium ${variance < 0 ? "text-red-600" : variance > 0 ? "text-green-600" : "text-slate-500"}`}>
-                                {variance > 0 ? "+" : ""}{Number(variance).toFixed(isKg ? 3 : 0)}{unit}
-                              </td>
-                              <td className={`text-center py-1.5 font-medium ${hcfg.badgeText}`}>
-                                {item.variance_pct.toFixed(1)}%
-                              </td>
-                              <td className="text-center py-1.5">
-                                <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${hcfg.badgeBg} ${hcfg.badgeText}`}>
-                                  {hcfg.icon} {hcfg.label}
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-            {audits.filter(a => a.status === "completed").length === 0 && (
+          {(() => {
+            const completed = audits.filter(a => a.status === "completed");
+            const pagedAudits = completed.slice(auditPage * auditPageSize, (auditPage + 1) * auditPageSize);
+            return (
+          <div className="border rounded-lg overflow-hidden bg-white">
+            {completed.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">No completed audits yet</div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b">
+                  <tr>
+                    <th className="text-left p-3 font-medium text-slate-600">Date</th>
+                    <th className="text-left p-3 font-medium text-slate-600">Type</th>
+                    <th className="text-left p-3 font-medium text-slate-600">Conducted By</th>
+                    <th className="text-left p-3 font-medium text-slate-600">Result</th>
+                    <th className="w-10" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {pagedAudits.map((audit) => {
+                    const isExpanded = expandedAuditId === audit.id;
+                    const flagged = audit.items.filter(i => !i.within_threshold).length;
+                    return (
+                      <React.Fragment key={audit.id}>
+                        {/* Summary row */}
+                        <tr
+                          className={`cursor-pointer transition-colors hover:bg-slate-50 ${isExpanded ? "bg-slate-50" : ""}`}
+                          onClick={() => setExpandedAuditId(isExpanded ? null : audit.id)}
+                        >
+                          <td className="p-3 font-medium text-slate-800 whitespace-nowrap">
+                            {formatDate(audit.audit_date)}
+                          </td>
+                          <td className="p-3">
+                            <Badge variant="outline" className="capitalize text-xs">{audit.audit_type}</Badge>
+                          </td>
+                          <td className="p-3 text-slate-500 text-xs">
+                            {audit.conducted_by_profile?.full_name ?? "—"}
+                          </td>
+                          <td className="p-3">
+                            {audit.items?.length > 0 && auditSummaryPill(audit.items)}
+                          </td>
+                          <td className="p-3 text-slate-400 text-center">
+                            {isExpanded
+                              ? <ChevronUp className="h-4 w-4 inline" />
+                              : <ChevronDown className="h-4 w-4 inline" />}
+                          </td>
+                        </tr>
+
+                        {/* Expanded detail */}
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={5} className="bg-blue-50/40 px-4 py-4 border-b border-blue-100">
+                              {flagged > 0 && (
+                                <div className="flex items-center gap-1.5 mb-3 text-xs text-amber-700 font-medium">
+                                  <AlertTriangle className="h-3.5 w-3.5" />
+                                  {flagged} item{flagged !== 1 ? "s" : ""} outside variance threshold
+                                </div>
+                              )}
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-blue-100">
+                                      <th className="text-left pb-2 font-medium text-slate-500">Product</th>
+                                      <th className="text-right pb-2 font-medium text-slate-500 px-3">System</th>
+                                      <th className="text-right pb-2 font-medium text-slate-500 px-3">Physical</th>
+                                      <th className="text-right pb-2 font-medium text-slate-500 px-3">Variance</th>
+                                      <th className="text-center pb-2 font-medium text-slate-500 px-3">%</th>
+                                      <th className="text-center pb-2 font-medium text-slate-500">Status</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {audit.items?.map((item) => {
+                                      const p = item.product as { name: string; unit_type: string } | null;
+                                      const isKg    = p?.unit_type === "kg";
+                                      const isBoxes = p?.unit_type === "boxes";
+                                      const system   = isBoxes ? item.system_stock_boxes   : isKg ? item.system_stock_kg   : item.system_stock_units;
+                                      const physical = isBoxes ? item.physical_stock_boxes : isKg ? item.physical_stock_kg : item.physical_stock_units;
+                                      const variance = physical - system;
+                                      const unit     = isKg ? " kg" : isBoxes ? " box" : " u";
+                                      const hsev: ItemSeverity = item.variance_pct === 0
+                                        ? "matched"
+                                        : item.within_threshold ? "ok"
+                                        : item.variance_pct <= 15 ? "amber"
+                                        : "red";
+                                      const hcfg = SEVERITY_CONFIG[hsev];
+                                      return (
+                                        <tr key={item.id} className={`border-b border-blue-50 last:border-0 ${hcfg.rowBg}`}>
+                                          <td className="py-2 font-medium text-slate-800">{p?.name}</td>
+                                          <td className="py-2 px-3 text-right font-mono text-slate-600">{Number(system).toFixed(isKg ? 3 : 0)}{unit}</td>
+                                          <td className="py-2 px-3 text-right font-mono text-slate-600">{Number(physical).toFixed(isKg ? 3 : 0)}{unit}</td>
+                                          <td className={`py-2 px-3 text-right font-mono font-medium ${variance < 0 ? "text-red-600" : variance > 0 ? "text-green-600" : "text-slate-500"}`}>
+                                            {variance > 0 ? "+" : ""}{Number(variance).toFixed(isKg ? 3 : 0)}{unit}
+                                          </td>
+                                          <td className={`py-2 px-3 text-center font-medium ${hcfg.badgeText}`}>
+                                            {item.variance_pct.toFixed(1)}%
+                                          </td>
+                                          <td className="py-2 text-center">
+                                            <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${hcfg.badgeBg} ${hcfg.badgeText}`}>
+                                              {hcfg.icon} {hcfg.label}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+            {completed.length > 0 && (
+              <TablePagination
+                total={completed.length}
+                page={auditPage}
+                pageSize={auditPageSize}
+                onPageChange={(p) => { setAuditPage(p); setExpandedAuditId(null); }}
+                onPageSizeChange={(s) => { setAuditPageSize(s); setAuditPage(0); setExpandedAuditId(null); }}
+              />
             )}
           </div>
+          );
+          })()}
         </div>
       </div>
     </div>

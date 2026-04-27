@@ -142,6 +142,8 @@ export function ReportsClient({
   creditPaymentsData,
   reconData,
   dataStartDate,
+  allTimeCreditIssued,
+  allTimeCreditPaid,
 }: {
   salesData: SaleRecord[];
   expenseData: ExpenseRecord[];
@@ -149,6 +151,8 @@ export function ReportsClient({
   creditPaymentsData: CreditPaymentRecord[];
   reconData: ReconRecord[];
   dataStartDate: string;
+  allTimeCreditIssued: number;
+  allTimeCreditPaid: number;
 }) {
   const [dateFrom, setDateFrom] = useState(
     format(subDays(new Date(), 30), "yyyy-MM-dd"),
@@ -156,6 +160,7 @@ export function ReportsClient({
   const [dateTo, setDateTo] = useState(format(new Date(), "yyyy-MM-dd"));
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
   const [activePreset, setActivePreset] = useState("");
+  const [dowFilter, setDowFilter] = useState<"all" | "cash" | "mobile" | "no_credit">("all");
   const [productSort, setProductSort] = useState<{
     key: SortKey;
     dir: "asc" | "desc";
@@ -311,14 +316,7 @@ export function ReportsClient({
     (s, p) => s + p.amount,
     0,
   );
-  const allTimeCreditSales = salesData
-    .filter((s) => s.payment_method === "credit")
-    .reduce((s, sale) => s + sale.total_amount, 0);
-  const allTimeCreditPaid = creditPaymentsData.reduce(
-    (s, p) => s + p.amount,
-    0,
-  );
-  const creditOutstanding = allTimeCreditSales - allTimeCreditPaid;
+  const creditOutstanding = allTimeCreditIssued - allTimeCreditPaid;
 
   // ── Reconciliation summary ─────────────────────────────────────────────────
   const totalCashVariance = filteredRecons.reduce(
@@ -373,8 +371,14 @@ export function ReportsClient({
     const acc: Record<number, { total: number; count: number }> = Object.fromEntries(
       DOW.map((_, i) => [i, { total: 0, count: 0 }]),
     );
+    const salesForDow = filteredSales.filter((s) => {
+      if (dowFilter === "cash") return s.payment_method === "cash";
+      if (dowFilter === "mobile") return s.payment_method === "mobile_money";
+      if (dowFilter === "no_credit") return s.payment_method !== "credit";
+      return true;
+    });
     const byDate = new Map<string, number>();
-    filteredSales.forEach((s) =>
+    salesForDow.forEach((s) =>
       byDate.set(s.sale_date, (byDate.get(s.sale_date) ?? 0) + s.total_amount),
     );
     byDate.forEach((total, dateStr) => {
@@ -391,7 +395,7 @@ export function ReportsClient({
       avg: acc[i].count > 0 ? Math.round(acc[i].total / acc[i].count) : 0,
       days: acc[i].count,
     }));
-  }, [filteredSales]);
+  }, [filteredSales, dowFilter]);
 
   // ── Product profitability ──────────────────────────────────────────────────
   const filteredProductSales = useMemo(() => {
@@ -923,9 +927,31 @@ export function ReportsClient({
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <Card className="lg:col-span-2">
                 <CardHeader>
-                  <CardTitle className="text-sm">
-                    Average Revenue by Day of Week
-                  </CardTitle>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <CardTitle className="text-sm">Average Revenue by Day of Week</CardTitle>
+                    <div className="flex gap-1">
+                      {(
+                        [
+                          { key: "all", label: "All" },
+                          { key: "cash", label: "Cash" },
+                          { key: "mobile", label: "Mobile" },
+                          { key: "no_credit", label: "No Credit" },
+                        ] as const
+                      ).map((f) => (
+                        <button
+                          key={f.key}
+                          onClick={() => setDowFilter(f.key)}
+                          className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
+                            dowFilter === f.key
+                              ? "bg-blue-600 text-white border-blue-600"
+                              : "bg-white text-slate-600 border-slate-200 hover:border-blue-400 hover:text-blue-600"
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={220}>

@@ -12,7 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
-import { CheckCircle, AlertTriangle, Calculator, ChevronLeft, ChevronRight, Layers, Receipt, Plus, Trash2, RefreshCw } from "lucide-react";
+import { CheckCircle, AlertTriangle, Calculator, ChevronRight, Layers, Receipt, Plus, Trash2, RefreshCw } from "lucide-react";
+import { TablePagination } from "@/components/ui/table-pagination";
 import type { DaySessionData, SessionData } from "./page";
 import type { ExpenseCategory } from "@/types/database";
 
@@ -58,14 +59,16 @@ export function ReconciliationClient({
   days,
   reconciliations: initialRecons,
   page,
-  hasMore,
+  pageSize,
+  total,
 }: {
   today: string;
   defaultDate: string;
   days: DaySessionData[];
   reconciliations: Reconciliation[];
   page: number;
-  hasMore: boolean;
+  pageSize: number;
+  total: number;
 }) {
   const { toast } = useToast();
   const { profile } = useProfile();
@@ -595,24 +598,15 @@ export function ReconciliationClient({
             {sortedDates.length === 0 && (
               <div className="text-center py-8 text-sm text-slate-400">No activity for this period</div>
             )}
-            {/* Pagination */}
-            <div className="flex items-center justify-between px-3 py-2 border-t text-sm">
-              <button
-                disabled={page === 0}
-                onClick={() => router.push(`?page=${page - 1}`)}
-                className="flex items-center gap-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-colors"
-              >
-                <ChevronLeft className="h-4 w-4" /> Newer
-              </button>
-              <span className="text-xs text-slate-400">Page {page + 1}</span>
-              <button
-                disabled={!hasMore}
-                onClick={() => router.push(`?page=${page + 1}`)}
-                className="flex items-center gap-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-colors"
-              >
-                Older <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
+            <TablePagination
+              total={total}
+              page={page}
+              pageSize={pageSize}
+              onPageChange={(p) => startTransition(() => router.push(`?page=${p}&pageSize=${pageSize}`))}
+              onPageSizeChange={(s) => startTransition(() => router.push(`?page=0&pageSize=${s}`))}
+              pageSizeOptions={[15, 30, 60]}
+              rowLabel="Days"
+            />
           </div>
         </div>
 

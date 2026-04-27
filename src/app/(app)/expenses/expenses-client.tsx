@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProfile } from "@/hooks/use-profile";
@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { Plus, Receipt, Banknote, Pencil } from "lucide-react";
+import { TablePagination } from "@/components/ui/table-pagination";
 import { format } from "date-fns";
 import type { ExpenseCategory } from "@/types/database";
 
@@ -51,6 +52,8 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
   const { toast } = useToast();
   const { profile } = useProfile();
   const [expenses, setExpenses] = useState<Expense[]>(initial);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
   const [dialog, setDialog] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editDialog, setEditDialog] = useState(false);
@@ -69,6 +72,11 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
     amount: "",
     paid_from_till: false,
   });
+
+  const pagedExpenses = useMemo(
+    () => expenses.slice(page * pageSize, (page + 1) * pageSize),
+    [expenses, page, pageSize],
+  );
 
   const totalThisMonth = expenses.reduce((s, e) => s + e.amount, 0);
   const byCategory = CATEGORIES.map((cat) => ({
@@ -216,7 +224,7 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {expenses.map((expense) => (
+                {pagedExpenses.map((expense) => (
                   <tr key={expense.id} className="hover:bg-slate-50">
                     <td className="p-3">{formatDate(expense.expense_date)}</td>
                     <td className="p-3">
@@ -248,6 +256,15 @@ export function ExpensesClient({ expenses: initial }: { expenses: Expense[] }) {
             </table>
             {expenses.length === 0 && (
               <div className="text-center py-12 text-muted-foreground">No expenses recorded</div>
+            )}
+            {expenses.length > 0 && (
+              <TablePagination
+                total={expenses.length}
+                page={page}
+                pageSize={pageSize}
+                onPageChange={setPage}
+                onPageSizeChange={(s) => { setPageSize(s); setPage(0); }}
+              />
             )}
           </div>
         </div>

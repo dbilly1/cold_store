@@ -1,11 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/layout/top-bar";
 import { ReconciliationClient } from "./reconciliation-client";
-import { format, subDays } from "date-fns";
+import { format } from "date-fns";
 
 export const dynamic = "force-dynamic";
 
-const PAGE_SIZE = 15;
+const DEFAULT_PAGE_SIZE = 15;
 
 export interface SessionExpense {
   id: string;
@@ -34,16 +34,14 @@ export interface DaySessionData {
 export default async function ReconciliationPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{ page?: string; pageSize?: string }>;
 }) {
   const params = await searchParams;
   const page = Math.max(0, parseInt(params?.page ?? "0") || 0);
+  const pageSize = Math.max(1, parseInt(params?.pageSize ?? String(DEFAULT_PAGE_SIZE)) || DEFAULT_PAGE_SIZE);
 
   const supabase = await createClient();
   const today = format(new Date(), "yyyy-MM-dd");
-  // Page 0: [today-14, today], Page 1: [today-29, today-15], etc.
-  const rangeEnd = format(subDays(new Date(), page * PAGE_SIZE), "yyyy-MM-dd");
-  const rangeStart = format(subDays(new Date(), (page + 1) * PAGE_SIZE - 1), "yyyy-MM-dd");
 
   type SaleRow = {
     sale_date: string;
@@ -71,49 +69,50 @@ export default async function ReconciliationPage({
     created_at: string;
   };
 
+  // Step 1: get all distinct dates from both sales and reconciliations (lightweight)
+  const [{ data: allSaleDateRows }, { data: allReconDateRows }] = await Promise.all([
+    supabase.from("sales").select("sale_date").eq("is_deleted", false).limit(50000),
+    supabase.from("daily_reconciliations").select("reconciliation_date").limit(10000),
+  ]);
+
+  const allDates = [...new Set([
+    ...(allSaleDateRows ?? []).map((r: { sale_date: string }) => r.sale_date),
+    ...(allReconDateRows ?? []).map((r: { reconciliation_date: string }) => r.reconciliation_date),
+  ])].sort((a, b) => b.localeCompare(a));
+
+  const total = allDates.length;
+  const pageDates = allDates.slice(page * pageSize, (page + 1) * pageSize);
+  const defaultDate = pageDates[0] ?? today;
+
+  // Step 2: fetch detailed data only for this page's exact dates
   const [
     { data: allSalesRaw },
     { data: tillExpensesRaw },
     { data: creditPaymentsRaw },
-    { count: olderCount },
-  ] = await Promise.all([
+  ] = pageDates.length > 0 ? await Promise.all([
     supabase
       .from("sales")
       .select("sale_date, total_amount, payment_method, created_at, batch_id")
       .eq("is_deleted", false)
-      .gte("sale_date", rangeStart)
-      .lte("sale_date", rangeEnd)
-      .order("sale_date", { ascending: false })
+      .in("sale_date", pageDates)
       .limit(2000),
-
     supabase
       .from("expenses")
       .select("id, expense_date, category, description, amount, batch_id")
       .eq("paid_from_till", true)
-      .gte("expense_date", rangeStart)
-      .lte("expense_date", rangeEnd)
+      .in("expense_date", pageDates)
       .limit(500),
-
     supabase
       .from("credit_payments")
       .select("customer_id, amount, payment_method, payment_date, collected_at_till, created_at")
       .eq("collected_at_till", true)
-      .gte("payment_date", rangeStart)
-      .lte("payment_date", rangeEnd)
+      .in("payment_date", pageDates)
       .limit(500),
-
-    // Peek one row older than rangeStart to know if there's a next page
-    supabase
-      .from("sales")
-      .select("id", { count: "exact", head: true })
-      .eq("is_deleted", false)
-      .lt("sale_date", rangeStart),
-  ]);
+  ]) : [{ data: [] }, { data: [] }, { data: [] }];
 
   const allSales = (allSalesRaw ?? []) as unknown as SaleRow[];
   const tillExpenses = (tillExpensesRaw ?? []) as unknown as ExpenseRow[];
   const creditPayments = (creditPaymentsRaw ?? []) as unknown as CreditPaymentRow[];
-  const hasMore = (olderCount ?? 0) > 0;
 
   // Group by (sale_date, session_key)
   type SessionAccum = { cash: number; mobile: number; time: string; credit_cash: number; credit_mobile: number };
@@ -178,7 +177,7 @@ export default async function ReconciliationPage({
       return { date, sessions, cash_expenses: expensesByDate.get(date) ?? 0 };
     });
 
-  const { data: reconciliations } = await supabase
+  const { data: reconciliations } = pageDates.length > 0 ? await supabase
     .from("daily_reconciliations")
     .select(`
       id, reconciliation_date, session_key, system_cash_total, system_mobile_total,
@@ -186,20 +185,20 @@ export default async function ReconciliationPage({
       status, notes, created_at,
       submitted_by_profile:profiles!daily_reconciliations_submitted_by_fkey(full_name)
     `)
-    .gte("reconciliation_date", rangeStart)
-    .lte("reconciliation_date", rangeEnd)
-    .order("reconciliation_date", { ascending: false });
+    .in("reconciliation_date", pageDates)
+    .order("reconciliation_date", { ascending: false }) : { data: [] };
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <TopBar title="Daily Reconciliation" />
       <ReconciliationClient
         today={today}
-        defaultDate={rangeEnd}
+        defaultDate={defaultDate}
         days={days}
         reconciliations={(reconciliations ?? []) as never}
         page={page}
-        hasMore={hasMore}
+        pageSize={pageSize}
+        total={total}
       />
     </div>
   );

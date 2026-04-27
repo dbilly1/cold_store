@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProfile } from "@/hooks/use-profile";
@@ -36,6 +36,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
+import { TablePagination } from "@/components/ui/table-pagination";
 
 interface Customer {
   id: string;
@@ -124,6 +125,8 @@ export function CreditClient({
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
+  const [ledgerPage, setLedgerPage] = useState(0);
+  const [ledgerPageSize, setLedgerPageSize] = useState(25);
 
   // Payment dialog
   const [paymentDialog, setPaymentDialog] = useState({
@@ -253,11 +256,17 @@ export function CreditClient({
     return { ...entry, balance: runBal } as LedgerEntry;
   });
   const displayLedger = [...ledger].reverse();
+  const pagedLedger = useMemo(
+    () => displayLedger.slice(ledgerPage * ledgerPageSize, (ledgerPage + 1) * ledgerPageSize),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [displayLedger.length, ledgerPage, ledgerPageSize, selectedCustomerId],
+  );
 
   function selectCustomer(id: string) {
     setSelectedCustomerId(id);
     setMobileView("detail");
     setExpandedSaleId(null);
+    setLedgerPage(0);
   }
 
   async function handleRecordPayment() {
@@ -834,7 +843,7 @@ export function CreditClient({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {displayLedger.map((entry) => {
+                        {pagedLedger.map((entry) => {
                           const isSale = entry.type === "sale";
                           const sale = isSale ? (entry.data as CreditSale) : null;
                           const payment = !isSale ? (entry.data as CreditPayment) : null;
@@ -996,6 +1005,15 @@ export function CreditClient({
                         })}
                       </tbody>
                     </table>
+                    {displayLedger.length > 0 && (
+                      <TablePagination
+                        total={displayLedger.length}
+                        page={ledgerPage}
+                        pageSize={ledgerPageSize}
+                        onPageChange={(p) => { setLedgerPage(p); setExpandedSaleId(null); }}
+                        onPageSizeChange={(s) => { setLedgerPageSize(s); setLedgerPage(0); setExpandedSaleId(null); }}
+                      />
+                    )}
                   </div>
                 )}
               </div>

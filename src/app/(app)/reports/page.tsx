@@ -16,6 +16,8 @@ export default async function ReportsPage() {
     { data: productSales },
     { data: creditPaymentsData },
     { data: reconData },
+    { data: allTimeCreditSalesData },
+    { data: allTimeCreditPaidData },
   ] = await Promise.all([
     // Sales — include quantity_boxes for correct COGS; include payment_method for split
     supabase
@@ -48,7 +50,7 @@ export default async function ReportsPage() {
       .gte("sale.sale_date" as never, oneYearAgo)
       .limit(50000),
 
-    // Credit repayments (for outstanding balance calc)
+    // Credit repayments within the date window (for period breakdown)
     supabase
       .from("credit_payments")
       .select("customer_id, amount, payment_method, payment_date")
@@ -62,7 +64,24 @@ export default async function ReportsPage() {
       .gte("reconciliation_date", oneYearAgo)
       .order("reconciliation_date", { ascending: false })
       .limit(2000),
+
+    // All-time credit sales total (no date filter — needed for accurate outstanding balance)
+    supabase
+      .from("sales")
+      .select("total_amount")
+      .eq("payment_method", "credit")
+      .eq("is_deleted", false)
+      .limit(50000),
+
+    // All-time credit payments total (no date filter)
+    supabase
+      .from("credit_payments")
+      .select("amount")
+      .limit(50000),
   ]);
+
+  const allTimeCreditIssued = (allTimeCreditSalesData ?? []).reduce((s, r) => s + r.total_amount, 0);
+  const allTimeCreditPaid = (allTimeCreditPaidData ?? []).reduce((s, r) => s + r.amount, 0);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -74,6 +93,8 @@ export default async function ReportsPage() {
         creditPaymentsData={creditPaymentsData ?? []}
         reconData={reconData ?? []}
         dataStartDate={oneYearAgo}
+        allTimeCreditIssued={allTimeCreditIssued}
+        allTimeCreditPaid={allTimeCreditPaid}
       />
     </div>
   );
