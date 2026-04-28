@@ -188,7 +188,23 @@ export function BulkEntryDialog({
             action: "CREATE_SALE",
             entity_type: "sales",
             entity_id: sale.id,
-            new_value: { total_amount: total, bulk: true },
+            new_value: {
+              sale_date: saleDate,
+              payment_method: row.payment_method,
+              total_amount: total,
+              discount_amount: disc,
+              bulk: true,
+              batch_id: batchId,
+              items: [{
+                product: product.name,
+                quantity_kg: product.unit_type === "kg" ? qty : 0,
+                quantity_units: product.unit_type === "units" ? qty : 0,
+                quantity_boxes: qBoxes,
+                unit_price: price,
+                discount_amount: disc,
+                line_total: total,
+              }],
+            },
           });
         }
       }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import { format, isToday, isYesterday, parseISO } from "date-fns";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
@@ -10,6 +10,7 @@ export interface AuditLogEntry {
   created_at: string;
   action: string;
   entity_type: string | null;
+  previous_value: unknown;
   new_value: unknown;
   user_profile: { full_name: string; role: string } | null;
 }
@@ -33,6 +34,8 @@ const ACTION_COLORS: Record<string, string> = {
   CREATE_EXPENSE:         "bg-orange-100 text-orange-800",
   ADD_CUSTOMER:           "bg-cyan-100 text-cyan-800",
   RECORD_CREDIT_PAYMENT:  "bg-cyan-50 text-cyan-700",
+  UPDATE_SALE:            "bg-yellow-100 text-yellow-800",
+  UPDATE_BATCH_DATE:      "bg-yellow-50 text-yellow-700",
 };
 
 function dayLabel(dateStr: string) {
@@ -42,19 +45,31 @@ function dayLabel(dateStr: string) {
   return format(d, "EEEE, d MMMM yyyy");
 }
 
+function formatJson(val: unknown): string {
+  try { return JSON.stringify(val, null, 2); } catch { return String(val); }
+}
+
 // ── Component ─────────────────────────────────────────────────
 export function AuditLogClient({ groups }: Props) {
-  // Open today + yesterday by default
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     const s = new Set<string>();
     groups.slice(0, 2).forEach((g) => s.add(g.date));
     return s;
   });
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   function toggle(date: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
       next.has(date) ? next.delete(date) : next.add(date);
+      return next;
+    });
+  }
+
+  function toggleRow(id: string) {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
   }
@@ -102,35 +117,83 @@ export function AuditLogClient({ groups }: Props) {
                       <th className="text-left px-4 py-2.5 font-medium text-slate-500 text-xs">Action</th>
                       <th className="text-left px-4 py-2.5 font-medium text-slate-500 text-xs">Entity</th>
                       <th className="text-left px-4 py-2.5 font-medium text-slate-500 text-xs">Details</th>
+                      <th className="w-8" />
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {entries.map((log) => (
-                      <tr key={log.id} className="hover:bg-slate-50">
-                        <td className="px-4 py-2.5 text-xs text-slate-400 whitespace-nowrap">
-                          {format(parseISO(log.created_at), "HH:mm")}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <p className="text-xs font-medium leading-tight">
-                            {log.user_profile?.full_name ?? "—"}
-                          </p>
-                          <p className="text-xs text-muted-foreground capitalize leading-tight">
-                            {log.user_profile?.role}
-                          </p>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <span className={`text-xs px-2 py-0.5 rounded font-medium ${ACTION_COLORS[log.action] ?? "bg-slate-100 text-slate-700"}`}>
-                            {log.action.replace(/_/g, " ")}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-xs text-slate-600 capitalize">
-                          {log.entity_type?.replace(/_/g, " ") ?? "—"}
-                        </td>
-                        <td className="px-4 py-2.5 text-xs text-slate-500 max-w-xs truncate">
-                          {log.new_value ? (() => { try { return JSON.stringify(log.new_value); } catch { return "[unserializable]"; } })() : "—"}
-                        </td>
-                      </tr>
-                    ))}
+                    {entries.map((log) => {
+                      const rowOpen = expandedRows.has(log.id);
+                      const hasPrev = !!log.previous_value;
+                      return (
+                        <React.Fragment key={log.id}>
+                          <tr
+                            key={log.id}
+                            className="hover:bg-slate-50 cursor-pointer"
+                            onClick={() => toggleRow(log.id)}
+                          >
+                            <td className="px-4 py-2.5 text-xs text-slate-400 whitespace-nowrap">
+                              {format(parseISO(log.created_at), "HH:mm")}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <p className="text-xs font-medium leading-tight">
+                                {log.user_profile?.full_name ?? "—"}
+                              </p>
+                              <p className="text-xs text-muted-foreground capitalize leading-tight">
+                                {log.user_profile?.role}
+                              </p>
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <span className={`text-xs px-2 py-0.5 rounded font-medium ${ACTION_COLORS[log.action] ?? "bg-slate-100 text-slate-700"}`}>
+                                {log.action.replace(/_/g, " ")}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 text-xs text-slate-600 capitalize">
+                              {log.entity_type?.replace(/_/g, " ") ?? "—"}
+                            </td>
+                            <td className="px-4 py-2.5 text-xs text-slate-500 max-w-xs truncate">
+                              {log.new_value
+                                ? (() => { try { return JSON.stringify(log.new_value); } catch { return "[unserializable]"; } })()
+                                : "—"}
+                            </td>
+                            <td className="px-2 py-2.5">
+                              {rowOpen
+                                ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+                                : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
+                            </td>
+                          </tr>
+
+                          {rowOpen && (
+                            <tr className="bg-slate-50">
+                              <td colSpan={6} className="px-6 py-4">
+                                {hasPrev ? (
+                                  <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Before</p>
+                                      <pre className="text-xs text-slate-600 whitespace-pre-wrap break-all font-mono bg-white border rounded p-3">
+                                        {formatJson(log.previous_value)}
+                                      </pre>
+                                    </div>
+                                    <div>
+                                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">After</p>
+                                      <pre className="text-xs text-slate-600 whitespace-pre-wrap break-all font-mono bg-white border rounded p-3">
+                                        {formatJson(log.new_value)}
+                                      </pre>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div>
+                                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Details</p>
+                                    <pre className="text-xs text-slate-600 whitespace-pre-wrap break-all font-mono bg-white border rounded p-3">
+                                      {formatJson(log.new_value)}
+                                    </pre>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

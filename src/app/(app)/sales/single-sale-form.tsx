@@ -180,7 +180,21 @@ export function SingleSaleForm({
         action: "CREATE_SALE",
         entity_type: "sales",
         entity_id: sale.id,
-        new_value: { total_amount: grandTotal, items: items.length },
+        new_value: {
+          sale_date: saleDate,
+          payment_method: paymentMethod,
+          total_amount: grandTotal,
+          discount_amount: saleDiscount,
+          items: items.map((item) => ({
+            product: products.find((p) => p.id === item.product_id)?.name ?? item.product_id,
+            quantity_kg: item.unit_type === "kg" ? item.quantity : 0,
+            quantity_units: item.unit_type === "units" ? item.quantity : 0,
+            quantity_boxes: item.quantity_boxes,
+            unit_price: item.unit_price,
+            discount_amount: item.discount,
+            line_total: lineTotal(item),
+          })),
+        },
       });
 
       const savedDate = saleDate;

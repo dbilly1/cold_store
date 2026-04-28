@@ -98,9 +98,11 @@ export interface EditDialogState {
   sale_date: string;
   original_sale_date: string;
   paymentMethod: PaymentMethod;
+  original_payment_method: PaymentMethod;
   customer_id: string;
   notes: string;
   items: EditItem[];
+  originalSale: ExistingSale | null;
 }
 
 export interface DeleteDialogState {

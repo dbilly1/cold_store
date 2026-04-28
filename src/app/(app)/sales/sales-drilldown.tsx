@@ -1,8 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { formatCurrency, formatDateTime, formatDate } from "@/lib/utils";
 import {
   Pencil,
@@ -11,6 +12,7 @@ import {
   ChevronRight,
   ChevronDown,
   ChevronLeft,
+  CalendarDays,
 } from "lucide-react";
 import type { ExistingSale } from "./sales-types";
 
@@ -24,6 +26,7 @@ interface SalesDrilldownProps {
   onToggleBatch: (batchId: string) => void;
   onEdit: (sale: ExistingSale) => void;
   onDelete: (saleId: string) => void;
+  onBatchDateChange?: (batchId: string, newDate: string) => Promise<void>;
   hideBack?: boolean;
 }
 
@@ -37,6 +40,7 @@ export function SalesDrilldown({
   onToggleBatch,
   onEdit,
   onDelete,
+  onBatchDateChange,
   hideBack = false,
 }: SalesDrilldownProps) {
   const canEdit =
@@ -45,6 +49,9 @@ export function SalesDrilldown({
     profile?.role === "admin";
   const canDelete =
     profile?.role === "supervisor" || profile?.role === "admin";
+
+  const [dateEdit, setDateEdit] = useState<{ batchId: string; date: string } | null>(null);
+  const [savingDate, setSavingDate] = useState(false);
 
   const SaleTable = ({ sales }: { sales: ExistingSale[] }) => (
     <table className="w-full text-sm">
@@ -261,33 +268,91 @@ export function SalesDrilldown({
                       key={batchId}
                       className="border rounded-lg overflow-hidden"
                     >
-                      <button
-                        className="w-full flex items-center justify-between px-4 py-3 bg-blue-50 hover:bg-blue-100 transition-colors text-left"
-                        onClick={() => onToggleBatch(batchId)}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Layers className="h-4 w-4 text-blue-500 shrink-0" />
-                          <div>
-                            <span className="text-sm font-medium text-blue-800">
-                              {sales.length} order
-                              {sales.length !== 1 ? "s" : ""}
-                            </span>
-                            <span className="text-xs text-blue-600 ml-3">
-                              · {time} · {recorder}
-                            </span>
+                      {/* Batch header */}
+                      <div className="flex items-center bg-blue-50 hover:bg-blue-100 transition-colors">
+                        <button
+                          className="flex-1 flex items-center justify-between px-4 py-3 text-left"
+                          onClick={() => onToggleBatch(batchId)}
+                        >
+                          <div className="flex items-center gap-3">
+                            <Layers className="h-4 w-4 text-blue-500 shrink-0" />
+                            <div>
+                              <span className="text-sm font-medium text-blue-800">
+                                {sales.length} order
+                                {sales.length !== 1 ? "s" : ""}
+                              </span>
+                              <span className="text-xs text-blue-600 ml-3">
+                                · {time} · {recorder}
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-sm font-semibold text-blue-800">
-                            {formatCurrency(batchTotal)}
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm font-semibold text-blue-800">
+                              {formatCurrency(batchTotal)}
+                            </span>
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4 text-blue-500" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-blue-500" />
+                            )}
+                          </div>
+                        </button>
+                        {canDelete && onBatchDateChange && (
+                          <button
+                            className="px-3 py-3 text-blue-400 hover:text-blue-700 transition-colors shrink-0"
+                            title="Change batch date"
+                            onClick={() =>
+                              setDateEdit(
+                                dateEdit?.batchId === batchId
+                                  ? null
+                                  : { batchId, date: sales[0].sale_date },
+                              )
+                            }
+                          >
+                            <CalendarDays className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Inline date editor */}
+                      {dateEdit?.batchId === batchId && (
+                        <div className="px-4 py-2.5 bg-blue-50 border-t border-blue-100 flex items-center gap-2">
+                          <span className="text-xs text-blue-700 font-medium whitespace-nowrap">
+                            Move batch to:
                           </span>
-                          {isExpanded ? (
-                            <ChevronDown className="h-4 w-4 text-blue-500" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 text-blue-500" />
-                          )}
+                          <Input
+                            type="date"
+                            value={dateEdit.date}
+                            onChange={(e) =>
+                              setDateEdit({ batchId, date: e.target.value })
+                            }
+                            className="h-7 text-xs w-36"
+                          />
+                          <Button
+                            size="sm"
+                            className="h-7 text-xs px-3"
+                            disabled={savingDate || !dateEdit.date || dateEdit.date === sales[0].sale_date}
+                            onClick={async () => {
+                              setSavingDate(true);
+                              await onBatchDateChange!(batchId, dateEdit.date);
+                              setSavingDate(false);
+                              setDateEdit(null);
+                            }}
+                          >
+                            {savingDate ? "Saving…" : "Save"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs px-3"
+                            disabled={savingDate}
+                            onClick={() => setDateEdit(null)}
+                          >
+                            Cancel
+                          </Button>
                         </div>
-                      </button>
+                      )}
+
                       {isExpanded && (
                         <div className="border-t">
                           <SaleTable sales={sales} />

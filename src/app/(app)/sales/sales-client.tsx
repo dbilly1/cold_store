@@ -15,6 +15,7 @@ import type {
   NewCustomerDialogState,
   EditItem,
 } from "./sales-types";
+import type { PaymentMethod } from "@/types/database";
 import { refreshSales, newBulkRow } from "./sales-types";
 import { SingleSaleForm } from "./single-sale-form";
 import { BulkEntryDialog } from "./bulk-entry-dialog";
@@ -71,9 +72,11 @@ export function SalesClient({
     sale_date: "",
     original_sale_date: "",
     paymentMethod: "cash",
+    original_payment_method: "cash",
     customer_id: "",
     notes: "",
     items: [],
+    originalSale: null,
   });
   const [editSaving, setEditSaving] = useState(false);
 
@@ -140,9 +143,11 @@ export function SalesClient({
       saleId: sale.id,
       sale_date: sale.sale_date,
       original_sale_date: sale.sale_date,
-      paymentMethod: sale.payment_method as EditDialogState["paymentMethod"],
+      paymentMethod: sale.payment_method as PaymentMethod,
+      original_payment_method: sale.payment_method as PaymentMethod,
       customer_id: sale.customer_id ?? "",
       notes: "",
+      originalSale: sale,
       items: (sale.items ?? []).map((item) => {
         const ut =
           (item.product as { name: string; unit_type: string } | null)
@@ -235,12 +240,31 @@ export function SalesClient({
       return;
     }
 
+    const deletedSale =
+      dayDetails.find((s) => s.id === deleteDialog.saleId) ??
+      sales.find((s) => s.id === deleteDialog.saleId);
+
     await supabase.from("audit_logs").insert({
       user_id: profile!.id,
       action: "DELETE_SALE",
       entity_type: "sales",
       entity_id: deleteDialog.saleId,
-      new_value: { reason: deleteDialog.reason },
+      new_value: {
+        reason: deleteDialog.reason,
+        sale_date: deletedSale?.sale_date,
+        payment_method: deletedSale?.payment_method,
+        total_amount: deletedSale?.total_amount,
+        customer_id: deletedSale?.customer_id ?? null,
+        items: (deletedSale?.items ?? []).map((i) => ({
+          product: (i.product as { name: string } | null)?.name ?? i.product_id,
+          quantity_kg: i.quantity_kg,
+          quantity_units: i.quantity_units,
+          quantity_boxes: i.quantity_boxes,
+          unit_price: i.unit_price,
+          discount_amount: i.discount_amount,
+          line_total: i.line_total,
+        })),
+      },
     });
 
     setSales(
@@ -289,13 +313,41 @@ export function SalesClient({
         return;
       }
 
+      const orig = editDialog.originalSale;
       await supabase.from("audit_logs").insert({
         user_id: profile!.id,
         action: "UPDATE_SALE",
         entity_type: "sales",
         entity_id: editDialog.saleId,
+        previous_value: orig ? {
+          sale_date: orig.sale_date,
+          payment_method: orig.payment_method,
+          total_amount: orig.total_amount,
+          customer_id: orig.customer_id ?? null,
+          items: (orig.items ?? []).map((i) => ({
+            product: (i.product as { name: string } | null)?.name ?? i.product_id,
+            quantity_kg: i.quantity_kg,
+            quantity_units: i.quantity_units,
+            quantity_boxes: i.quantity_boxes,
+            unit_price: i.unit_price,
+            discount_amount: i.discount_amount,
+            line_total: i.line_total,
+          })),
+        } : null,
         new_value: {
+          sale_date: editDialog.sale_date,
           payment_method: editDialog.paymentMethod,
+          customer_id: editDialog.customer_id || null,
+          items: editDialog.items.map((i) => ({
+            product: i.productName,
+            quantity_kg: i.unit_type === "kg" ? parseFloat(i.quantity) || 0 : 0,
+            quantity_units: i.unit_type === "units" ? parseFloat(i.quantity) || 0 : 0,
+            quantity_boxes: i.unit_type === "boxes"
+              ? parseFloat(i.quantity) || 0
+              : parseFloat(i.quantity_boxes) || 0,
+            unit_price: parseFloat(i.unit_price) || 0,
+            discount_amount: parseFloat(i.discount_amount) || 0,
+          })),
         },
       });
 
@@ -322,6 +374,51 @@ export function SalesClient({
     } finally {
       setEditSaving(false);
     }
+  }
+
+  // ── handleBatchDateChange ────────────────────
+  async function handleBatchDateChange(batchId: string, newDate: string) {
+    const supabase = createClient();
+    const oldDate =
+      dayDetails.find((s) => s.batch_id === batchId)?.sale_date ??
+      selectedDate ??
+      "";
+
+    const { error } = await supabase
+      .from("sales")
+      .update({ sale_date: newDate, updated_at: new Date().toISOString() })
+      .eq("batch_id", batchId);
+
+    if (error) {
+      toast({ title: "Failed to update batch date", description: error.message, variant: "destructive" });
+      return;
+    }
+
+    await supabase.from("audit_logs").insert({
+      user_id: profile!.id,
+      action: "UPDATE_BATCH_DATE",
+      entity_type: "sales",
+      entity_id: batchId,
+      previous_value: { sale_date: oldDate },
+      new_value: { sale_date: newDate },
+    });
+
+    // Refresh current view — batch moves away from this date
+    if (selectedDate) {
+      await openDay(selectedDate);
+    } else {
+      const fresh = await refreshSales(supabase, selectedDate ?? newDate);
+      if (fresh) setSales(fresh as unknown as ExistingSale[]);
+    }
+
+    if (!isSalesperson) {
+      await refreshSummaryRow(supabase, newDate);
+      if (selectedDate && selectedDate !== newDate) {
+        await refreshSummaryRow(supabase, selectedDate);
+      }
+    }
+
+    toast({ title: "Batch date updated" });
   }
 
   // ── handleAddCustomer ────────────────────────
@@ -436,6 +533,7 @@ export function SalesClient({
             onDelete={(saleId) =>
               setDeleteDialog({ open: true, saleId, reason: "" })
             }
+            onBatchDateChange={handleBatchDateChange}
           />
         )}
 
@@ -475,6 +573,7 @@ export function SalesClient({
             onDelete={(saleId) =>
               setDeleteDialog({ open: true, saleId, reason: "" })
             }
+            onBatchDateChange={handleBatchDateChange}
           />
         )}
       </div>
