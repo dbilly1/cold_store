@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTime } from "@/lib/utils";
 import type { ReactElement } from "react";
-import { AlertTriangle, CheckCircle, Bell, X } from "lucide-react";
+import { CheckCircle, Bell, CheckCheck } from "lucide-react";
 import type { Alert, AlertStatus } from "@/types/database";
 
 const SEVERITY_STYLE: Record<string, string> = {
@@ -39,9 +39,11 @@ export function AlertsClient({ alerts: initial }: { alerts: Alert[] }) {
   const { profile } = useProfile();
   const [alerts, setAlerts] = useState<Alert[]>(initial);
   const [filter, setFilter] = useState<AlertStatus | "all">("open");
+  const [acknowledgingAll, setAcknowledgingAll] = useState(false);
 
   const filtered = alerts.filter(a => filter === "all" || a.status === filter);
-  const openCount = alerts.filter(a => a.status === "open").length;
+  const openAlerts = alerts.filter(a => a.status === "open");
+  const openCount = openAlerts.length;
 
   async function acknowledge(id: string) {
     const supabase = createClient();
@@ -51,16 +53,28 @@ export function AlertsClient({ alerts: initial }: { alerts: Alert[] }) {
       acknowledged_at: new Date().toISOString(),
     }).eq("id", id);
     if (error) { toast({ title: "Failed to acknowledge alert", description: error.message, variant: "destructive" }); return; }
-    setAlerts(alerts.map(a => a.id === id ? { ...a, status: "acknowledged" } : a));
+    setAlerts(prev => prev.map(a => a.id === id ? { ...a, status: "acknowledged" } : a));
     toast({ title: "Alert acknowledged" });
   }
 
-  async function resolve(id: string) {
+  async function acknowledgeAll() {
+    if (openAlerts.length === 0) return;
+    setAcknowledgingAll(true);
     const supabase = createClient();
-    const { error } = await supabase.from("alerts").update({ status: "resolved" }).eq("id", id);
-    if (error) { toast({ title: "Failed to resolve alert", description: error.message, variant: "destructive" }); return; }
-    setAlerts(alerts.map(a => a.id === id ? { ...a, status: "resolved" } : a));
-    toast({ title: "Alert resolved" });
+    const now = new Date().toISOString();
+    const ids = openAlerts.map(a => a.id);
+    const { error } = await supabase.from("alerts").update({
+      status: "acknowledged",
+      acknowledged_by: profile!.id,
+      acknowledged_at: now,
+    }).in("id", ids);
+    if (error) {
+      toast({ title: "Failed to acknowledge alerts", description: error.message, variant: "destructive" });
+    } else {
+      setAlerts(prev => prev.map(a => ids.includes(a.id) ? { ...a, status: "acknowledged" } : a));
+      toast({ title: `${ids.length} alert${ids.length !== 1 ? "s" : ""} acknowledged` });
+    }
+    setAcknowledgingAll(false);
   }
 
   return (
@@ -70,12 +84,26 @@ export function AlertsClient({ alerts: initial }: { alerts: Alert[] }) {
           <Bell className="h-4 w-4 text-amber-500" />
           <span className="font-semibold">{openCount} open alert{openCount !== 1 ? "s" : ""}</span>
         </div>
-        <div className="flex gap-1 ml-auto">
-          {(["open", "acknowledged", "resolved", "all"] as const).map((s) => (
-            <Button key={s} size="sm" variant={filter === s ? "default" : "outline"} onClick={() => setFilter(s)} className="capitalize h-8">
-              {s}
+        <div className="flex gap-2 ml-auto">
+          {openCount > 1 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 text-blue-600 border-blue-200 hover:bg-blue-50"
+              disabled={acknowledgingAll}
+              onClick={acknowledgeAll}
+            >
+              <CheckCheck className="h-3.5 w-3.5" />
+              {acknowledgingAll ? "Acknowledging..." : `Acknowledge All (${openCount})`}
             </Button>
-          ))}
+          )}
+          <div className="flex gap-1">
+            {(["open", "acknowledged", "resolved", "all"] as const).map((s) => (
+              <Button key={s} size="sm" variant={filter === s ? "default" : "outline"} onClick={() => setFilter(s)} className="capitalize h-8">
+                {s}
+              </Button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -104,18 +132,8 @@ export function AlertsClient({ alerts: initial }: { alerts: Alert[] }) {
                   <p className="text-xs text-muted-foreground mt-1">{formatDateTime(alert.created_at)}</p>
                 </div>
                 {alert.status === "open" && (
-                  <div className="flex gap-1 flex-shrink-0">
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => acknowledge(alert.id)}>
-                      Acknowledge
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-7 text-green-600 hover:text-green-700" onClick={() => resolve(alert.id)}>
-                      <CheckCircle className="h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
-                {alert.status === "acknowledged" && (
-                  <Button size="sm" variant="ghost" className="h-7 text-green-600 flex-shrink-0" onClick={() => resolve(alert.id)}>
-                    <CheckCircle className="h-4 w-4" />
+                  <Button size="sm" variant="outline" className="h-7 text-xs flex-shrink-0" onClick={() => acknowledge(alert.id)}>
+                    Acknowledge
                   </Button>
                 )}
               </div>
