@@ -581,9 +581,7 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
 
   // ── Default view: start audit + history ──
   const inProgressAudits = audits.filter(a => a.status === "in_progress");
-  const completedAudits  = audits.filter(a => a.status === "completed");
-  const cancelledAudits  = audits.filter(a => a.status === "cancelled");
-  const historyAudits    = [...completedAudits, ...cancelledAudits];
+  const historyAudits    = audits.filter(a => a.status === "completed");
   const pagedAudits      = historyAudits.slice(auditPage * auditPageSize, (auditPage + 1) * auditPageSize);
 
   return (
@@ -736,15 +734,14 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                 <tbody className="divide-y">
                   {pagedAudits.map((audit) => {
                     const isExpanded = expandedAuditId === audit.id;
-                    const isCancelled = audit.status === "cancelled";
                     const flagged = audit.items.filter(i => !i.within_threshold).length;
                     return (
                       <React.Fragment key={audit.id}>
                         <tr
-                          className={`transition-colors ${isCancelled ? "opacity-50" : "cursor-pointer hover:bg-slate-50"} ${isExpanded && !isCancelled ? "bg-slate-50" : ""}`}
-                          onClick={() => !isCancelled && setExpandedAuditId(isExpanded ? null : audit.id)}
+                          className={`cursor-pointer transition-colors hover:bg-slate-50 ${isExpanded ? "bg-slate-50" : ""}`}
+                          onClick={() => setExpandedAuditId(isExpanded ? null : audit.id)}
                         >
-                          <td className={`p-3 font-medium whitespace-nowrap ${isCancelled ? "line-through text-slate-400" : "text-slate-800"}`}>
+                          <td className="p-3 font-medium whitespace-nowrap text-slate-800">
                             {formatDate(audit.audit_date)}
                           </td>
                           <td className="p-3">
@@ -754,17 +751,17 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                             {audit.conducted_by_profile?.full_name ?? "—"}
                           </td>
                           <td className="p-3">
-                            {!isCancelled && audit.items?.length > 0 && auditSummaryPill(audit.items)}
+                            {audit.items?.length > 0 && auditSummaryPill(audit.items)}
                           </td>
                           <td className="p-3">
                             {statusBadge(audit.status)}
                           </td>
                           <td className="p-3 text-center">
-                            {isCancelled ? null : isExpanded
+                            {isExpanded
                               ? <ChevronUp className="h-4 w-4 inline text-slate-400" />
                               : <ChevronDown className="h-4 w-4 inline text-slate-400" />}
-                            {/* Void button — admin only, completed audits only */}
-                            {isAdmin && !isCancelled && (
+                            {/* Void button — admin only */}
+                            {isAdmin && (
                               <button
                                 title="Void audit"
                                 className="ml-1 text-slate-300 hover:text-red-500 transition-colors"
@@ -778,7 +775,7 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                         </tr>
 
                         {/* Expanded detail */}
-                        {isExpanded && !isCancelled && (
+                        {isExpanded && (
                           <tr>
                             <td colSpan={6} className="bg-blue-50/40 px-4 py-4 border-b border-blue-100">
                               {flagged > 0 && (
