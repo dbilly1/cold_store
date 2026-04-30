@@ -281,6 +281,7 @@ export function InventoryHistoryClient() {
       `)
       .gte("audit_date", dateFrom)
       .lte("audit_date", dateTo)
+      .neq("status", "cancelled")
       .order("audit_date", { ascending: false });
     setAudits((data as unknown as StockAuditRow[]) ?? []);
     setLoadingAudits(false);

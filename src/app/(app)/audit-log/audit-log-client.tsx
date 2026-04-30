@@ -31,6 +31,8 @@ const ACTION_COLORS: Record<string, string> = {
   APPROVE_ADJUSTMENT:     "bg-amber-50 text-amber-700",
   SUBMIT_RECONCILIATION:  "bg-purple-100 text-purple-800",
   COMPLETE_AUDIT:         "bg-indigo-100 text-indigo-800",
+  CANCEL_AUDIT:           "bg-slate-100 text-slate-600",
+  VOID_AUDIT:             "bg-red-50 text-red-600",
   CREATE_EXPENSE:         "bg-orange-100 text-orange-800",
   ADD_CUSTOMER:           "bg-cyan-100 text-cyan-800",
   RECORD_CREDIT_PAYMENT:  "bg-cyan-50 text-cyan-700",

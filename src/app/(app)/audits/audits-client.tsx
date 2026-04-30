@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, type JSX } from "react";
+import React, { useState, type JSX } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProfile } from "@/hooks/use-profile";
@@ -11,7 +11,10 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate } from "@/lib/utils";
-import { Plus, ClipboardList, CheckCircle, ChevronLeft, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  Plus, ClipboardList, CheckCircle, ChevronLeft, AlertTriangle,
+  CheckCircle2, ChevronDown, ChevronUp, Play, XCircle, Ban,
+} from "lucide-react";
 import { TablePagination } from "@/components/ui/table-pagination";
 import type { AuditType } from "@/types/database";
 
@@ -57,14 +60,13 @@ const SEVERITY_CONFIG: Record<ItemSeverity, {
   badgeBg: string; badgeText: string;
   icon: string;
 }> = {
-  pending:  { label: "—",                rowBg: "",              badgeBg: "",                   badgeText: "text-slate-300",  icon: "" },
-  matched:  { label: "Matched",          rowBg: "bg-green-50/50",badgeBg: "bg-green-100",        badgeText: "text-green-700",  icon: "✓" },
-  ok:       { label: "Within Threshold", rowBg: "bg-green-50/30",badgeBg: "bg-blue-100",         badgeText: "text-blue-700",   icon: "✓" },
-  amber:    { label: "Flagged",          rowBg: "bg-amber-50",   badgeBg: "bg-amber-100",        badgeText: "text-amber-700",  icon: "⚠" },
-  red:      { label: "Flagged",          rowBg: "bg-red-50",     badgeBg: "bg-red-100",          badgeText: "text-red-700",    icon: "⚠" },
+  pending:  { label: "—",                rowBg: "",               badgeBg: "",              badgeText: "text-slate-300",  icon: "" },
+  matched:  { label: "Matched",          rowBg: "bg-green-50/50", badgeBg: "bg-green-100",  badgeText: "text-green-700",  icon: "✓" },
+  ok:       { label: "Within Threshold", rowBg: "bg-green-50/30", badgeBg: "bg-blue-100",   badgeText: "text-blue-700",   icon: "✓" },
+  amber:    { label: "Flagged",          rowBg: "bg-amber-50",    badgeBg: "bg-amber-100",  badgeText: "text-amber-700",  icon: "⚠" },
+  red:      { label: "Flagged",          rowBg: "bg-red-50",      badgeBg: "bg-red-100",    badgeText: "text-red-700",    icon: "⚠" },
 };
 
-// history-card summary pill
 function auditSummaryPill(items: AuditItem[]) {
   const flagged = items.filter(i => !i.within_threshold).length;
   const ok      = items.length - flagged;
@@ -82,11 +84,8 @@ function auditSummaryPill(items: AuditItem[]) {
   );
 }
 
-// ---------- other helpers ----------
 function systemDisplay(item: AuditItem) {
   const ut = item.product?.unit_type;
-  // current_stock_kg / current_stock_units already include boxes converted —
-  // don't add boxes again or it appears double-counted
   if (ut === "kg")    return `${Number(item.system_stock_kg).toFixed(3)} kg`;
   if (ut === "units") return `${item.system_stock_units} units`;
   return `${item.system_stock_boxes} boxes`;
@@ -95,16 +94,20 @@ function systemDisplay(item: AuditItem) {
 function liveVariance(item: AuditItem, counts: Counts) {
   const c = counts[item.product_id] ?? { primary: "", boxes: "" };
   const physPrimary = parseFloat(c.primary) || 0;
-  const physBoxes  = parseFloat(c.boxes)   || 0;
+  const physBoxes   = parseFloat(c.boxes)   || 0;
   const ut = item.product?.unit_type;
   const unitsPerBox = item.product?.units_per_box ?? 0;
   const sysPrimary = ut === "kg" ? item.system_stock_kg : ut === "units" ? item.system_stock_units : item.system_stock_boxes;
-  // boxes type: count is stored in counts.primary (not counts.boxes)
-  // kg/units: primary + boxes×unitsPerBox
   const effectivePhys = ut === "boxes" ? physPrimary : physPrimary + physBoxes * unitsPerBox;
   const diff = effectivePhys - sysPrimary;
   const pct = sysPrimary > 0 ? Math.abs(diff / sysPrimary) * 100 : 0;
   return { diff, pct, effectivePhys };
+}
+
+// Today's date string (YYYY-MM-DD local)
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export function AuditsClient({ products, audits: initial }: { products: Product[]; audits: Audit[] }) {
@@ -121,8 +124,60 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // ---------- Start Audit ----------
-  async function startAudit() {
+  // ── New state for the four features ──
+  const [confirmLeave, setConfirmLeave] = useState(false);   // Back confirmation
+  const [confirmNewAudit, setConfirmNewAudit] = useState(false); // Duplicate day warning
+  const [cancellingId, setCancellingId] = useState<string | null>(null); // Cancel/void in progress
+  const [voidingId, setVoidingId] = useState<string | null>(null);
+
+  const isAdmin = profile?.role === "admin" || profile?.role === "supervisor";
+  const today = todayStr();
+
+  // ---------- Cancel / Void an audit ----------
+  async function cancelAudit(auditId: string) {
+    setCancellingId(auditId);
+    const supabase = createClient();
+    await supabase
+      .from("stock_audits")
+      .update({ status: "cancelled" })
+      .eq("id", auditId);
+    await supabase.from("audit_logs").insert({
+      user_id: profile!.id, action: "CANCEL_AUDIT",
+      entity_type: "stock_audits", entity_id: auditId,
+    });
+    setAudits(prev => prev.map(a => a.id === auditId ? { ...a, status: "cancelled" } : a));
+    setCancellingId(null);
+    toast({ title: "Audit cancelled" });
+  }
+
+  async function voidAudit(auditId: string) {
+    setVoidingId(auditId);
+    const supabase = createClient();
+    await supabase
+      .from("stock_audits")
+      .update({ status: "cancelled" })
+      .eq("id", auditId);
+    await supabase.from("audit_logs").insert({
+      user_id: profile!.id, action: "VOID_AUDIT",
+      entity_type: "stock_audits", entity_id: auditId,
+    });
+    setAudits(prev => prev.map(a => a.id === auditId ? { ...a, status: "cancelled" } : a));
+    setVoidingId(null);
+    toast({ title: "Audit voided" });
+  }
+
+  // ---------- Resume an in-progress audit ----------
+  function resumeAudit(audit: Audit) {
+    const counts: Counts = {};
+    audit.items.forEach(item => { counts[item.product_id] = { primary: "", boxes: "" }; });
+    setPhysicalCounts(counts);
+    setActiveAudit(audit);
+    setConfirmLeave(false);
+  }
+
+  // ---------- Start Audit (with duplicate check) ----------
+  async function doStartAudit() {
+    setConfirmNewAudit(false);
     setCreating(true);
     const supabase = createClient();
     const auditProducts = auditType === "full"
@@ -168,7 +223,6 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
     auditProducts.forEach((p) => { counts[p.id] = { primary: "", boxes: "" }; });
     setPhysicalCounts(counts);
 
-    // Use real DB ids so completeAudit can update them
     const itemIdMap = Object.fromEntries((insertedItems ?? []).map(r => [r.product_id, r.id]));
 
     const newAudit: Audit = {
@@ -192,6 +246,16 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
     toast({ title: `Audit started — count ${auditProducts.length} product${auditProducts.length > 1 ? "s" : ""}` });
   }
 
+  function startAudit() {
+    // Warn if a completed audit already exists for today
+    const hasCompletedToday = audits.some(a => a.status === "completed" && a.audit_date === today);
+    if (hasCompletedToday) {
+      setConfirmNewAudit(true);
+      return;
+    }
+    doStartAudit();
+  }
+
   // ---------- Complete Audit ----------
   async function completeAudit() {
     if (!activeAudit) return;
@@ -207,8 +271,6 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
       const isBoxes = p?.unit_type === "boxes";
       const unitsPerBox = p?.units_per_box ?? 0;
 
-      // boxes type: count is in physPrimary (that's what the input writes to)
-      // kg/units: primary + boxes×unitsPerBox
       const effectivePhys = isBoxes ? physPrimary : physPrimary + physBoxes * unitsPerBox;
       const physKg    = isKg    ? effectivePhys : 0;
       const physUnits = (!isKg && !isBoxes) ? effectivePhys : 0;
@@ -263,21 +325,22 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
 
     setAudits(audits.map((a) => a.id === activeAudit.id ? { ...a, status: "completed" } : a));
     setActiveAudit(null);
+    setConfirmLeave(false);
     toast({ title: "Audit completed" });
     setSaving(false);
   }
 
   const statusBadge = (status: string): JSX.Element => {
     const map: Record<string, JSX.Element> = {
-      completed: <Badge variant="success">Completed</Badge>,
+      completed:   <Badge variant="success">Completed</Badge>,
       in_progress: <Badge variant="warning">In Progress</Badge>,
-      draft: <Badge variant="secondary">Draft</Badge>,
-      cancelled: <Badge variant="outline">Cancelled</Badge>,
+      draft:       <Badge variant="secondary">Draft</Badge>,
+      cancelled:   <Badge variant="outline">Cancelled</Badge>,
     };
     return map[status] ?? <Badge>{status}</Badge>;
   };
 
-  // ── Active audit count-entry view (full page) ──
+  // ── Active audit count-entry view ──
   if (activeAudit) {
     const total   = activeAudit.items.length;
     const counted = activeAudit.items.filter((item) => {
@@ -302,9 +365,13 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
     return (
       <div className="flex-1 overflow-y-auto p-4 md:p-6">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => { setActiveAudit(null); }} className="gap-1">
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => setConfirmLeave(true)}
+              className="gap-1"
+            >
               <ChevronLeft className="h-4 w-4" /> Back
             </Button>
             <div>
@@ -322,24 +389,56 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
           </Button>
         </div>
 
+        {/* Leave confirmation banner */}
+        {confirmLeave && (
+          <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex flex-wrap items-center gap-3">
+            <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0" />
+            <p className="text-sm text-amber-800 flex-1 min-w-0">
+              Leave this audit? Choose to <strong>keep it in progress</strong> so you can resume later, or <strong>cancel it</strong> to remove it from records.
+            </p>
+            <div className="flex gap-2 flex-shrink-0">
+              <Button size="sm" variant="outline" onClick={() => setConfirmLeave(false)}>
+                Stay
+              </Button>
+              <Button
+                size="sm" variant="outline"
+                className="text-slate-700"
+                onClick={() => { setActiveAudit(null); setConfirmLeave(false); }}
+              >
+                Keep In Progress
+              </Button>
+              <Button
+                size="sm" variant="outline"
+                className="text-red-600 border-red-200 hover:bg-red-50"
+                disabled={cancellingId === activeAudit.id}
+                onClick={async () => {
+                  await cancelAudit(activeAudit.id);
+                  setActiveAudit(null);
+                  setConfirmLeave(false);
+                }}
+              >
+                <XCircle className="h-3.5 w-3.5 mr-1" />
+                Cancel Audit
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Summary bar */}
         <div className={`flex flex-wrap items-center gap-3 mb-5 p-3 rounded-lg border text-sm ${
           flaggedRed > 0 ? "bg-red-50 border-red-200" :
           flaggedAmber > 0 ? "bg-amber-50 border-amber-200" :
           allDone ? "bg-green-50 border-green-200" : "bg-blue-50 border-blue-200"
         }`}>
-          {/* Progress */}
           <span className={`font-medium ${allDone ? "text-green-700" : "text-blue-700"}`}>
             {counted} / {total} counted
           </span>
-          {/* Progress bar */}
           <div className="flex-1 min-w-24 h-1.5 bg-white/70 rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all ${allDone && flaggedRed === 0 && flaggedAmber === 0 ? "bg-green-500" : "bg-blue-500"}`}
               style={{ width: `${total > 0 ? (counted / total) * 100 : 0}%` }}
             />
           </div>
-          {/* Flags */}
           {flaggedRed > 0 && (
             <span className="flex items-center gap-1 text-red-700 font-medium">
               <AlertTriangle className="h-3.5 w-3.5" />
@@ -386,21 +485,15 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
 
                 return (
                   <tr key={item.product_id} className={cfg.rowBg}>
-                    {/* Product name */}
                     <td className="p-3">
                       <p className="font-medium">{p?.name}</p>
                       <p className="text-xs text-slate-400 capitalize">{p?.unit_type}</p>
                     </td>
-
-                    {/* System stock */}
                     <td className="p-3 text-right text-slate-600 font-mono text-xs">
                       {systemDisplay(item)}
                     </td>
-
-                    {/* Physical count inputs */}
                     <td className="p-3">
                       <div className="flex items-center gap-3">
-                        {/* Primary quantity (kg or units) — not shown for "boxes" type */}
                         {p?.unit_type !== "boxes" && (
                           <div className="flex items-center gap-1.5">
                             <Input
@@ -417,9 +510,6 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                             <Label className="text-xs text-slate-500 whitespace-nowrap">{unitLabel}</Label>
                           </div>
                         )}
-
-                        {/* Boxes input — for "boxes" type it IS the primary count;
-                            for kg/units it's an optional conversion helper */}
                         {p?.unit_type === "boxes" ? (
                           <div className="flex items-center gap-1.5">
                             <Input
@@ -444,7 +534,7 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                               boxes
                               {parseFloat(counts.boxes) > 0 && (
                                 <span className="ml-1 text-blue-500">
-                                  (+{(parseFloat(counts.boxes) * p.units_per_box).toFixed(p.unit_type === "kg" ? 3 : 0)} {unitLabel})
+                                  (+{(parseFloat(counts.boxes) * p.units_per_box!).toFixed(p.unit_type === "kg" ? 3 : 0)} {unitLabel})
                                 </span>
                               )}
                             </Label>
@@ -452,8 +542,6 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                         ) : null}
                       </div>
                     </td>
-
-                    {/* Live variance */}
                     <td className="p-3 text-right font-mono text-xs">
                       {hasCount ? (
                         <div className={diff < 0 ? "text-red-600" : diff > 0 ? "text-green-600" : "text-slate-500"}>
@@ -464,8 +552,6 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                         <span className="text-slate-300">—</span>
                       )}
                     </td>
-
-                    {/* Status indicator */}
                     <td className="p-3 text-center">
                       {severity === "pending" ? (
                         <span className="text-xs text-slate-300">—</span>
@@ -494,12 +580,18 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
   }
 
   // ── Default view: start audit + history ──
+  const inProgressAudits = audits.filter(a => a.status === "in_progress");
+  const completedAudits  = audits.filter(a => a.status === "completed");
+  const cancelledAudits  = audits.filter(a => a.status === "cancelled");
+  const historyAudits    = [...completedAudits, ...cancelledAudits];
+  const pagedAudits      = historyAudits.slice(auditPage * auditPageSize, (auditPage + 1) * auditPageSize);
+
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
         {/* Start Audit Panel */}
-        <div>
+        <div className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
@@ -508,61 +600,127 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div>
-                <Label>Audit Type</Label>
-                <Select value={auditType} onValueChange={(v) => setAuditType(v as AuditType)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="full">Full Audit — all products</SelectItem>
-                    <SelectItem value="random">Random — selected products</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {auditType === "random" && (
-                <div>
-                  <Label className="text-xs text-muted-foreground mb-1 block">Select products to count</Label>
-                  <div className="space-y-1 max-h-56 overflow-y-auto border rounded-md p-2">
-                    {products.map((p) => (
-                      <label key={p.id} className="flex items-center gap-2 text-sm py-1 px-1 rounded hover:bg-slate-50 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={selectedProducts.includes(p.id)}
-                          onChange={(e) => setSelectedProducts(e.target.checked
-                            ? [...selectedProducts, p.id]
-                            : selectedProducts.filter(id => id !== p.id)
-                          )}
-                          className="rounded"
-                        />
-                        <span>{p.name}</span>
-                        <span className="ml-auto text-xs text-slate-400 capitalize">{p.unit_type}</span>
-                      </label>
-                    ))}
+              {/* Duplicate-day warning */}
+              {confirmNewAudit && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-amber-800">
+                      A completed audit already exists for <strong>today</strong>. Running a second one will create a duplicate record that may affect loss analysis.
+                    </p>
                   </div>
-                  {selectedProducts.length > 0 && (
-                    <p className="text-xs text-slate-500 mt-1">{selectedProducts.length} selected</p>
-                  )}
+                  <div className="flex gap-2 justify-end">
+                    <Button size="sm" variant="outline" onClick={() => setConfirmNewAudit(false)}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={doStartAudit} disabled={creating}>
+                      {creating ? "Starting..." : "Start Anyway"}
+                    </Button>
+                  </div>
                 </div>
               )}
 
-              <Button onClick={startAudit} className="w-full" disabled={creating}>
-                <Plus className="h-4 w-4 mr-1" />
-                {creating ? "Starting..." : "Start Audit"}
-              </Button>
+              {!confirmNewAudit && (
+                <>
+                  <div>
+                    <Label>Audit Type</Label>
+                    <Select value={auditType} onValueChange={(v) => setAuditType(v as AuditType)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="full">Full Audit — all products</SelectItem>
+                        <SelectItem value="random">Random — selected products</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {auditType === "random" && (
+                    <div>
+                      <Label className="text-xs text-muted-foreground mb-1 block">Select products to count</Label>
+                      <div className="space-y-1 max-h-56 overflow-y-auto border rounded-md p-2">
+                        {products.map((p) => (
+                          <label key={p.id} className="flex items-center gap-2 text-sm py-1 px-1 rounded hover:bg-slate-50 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={selectedProducts.includes(p.id)}
+                              onChange={(e) => setSelectedProducts(e.target.checked
+                                ? [...selectedProducts, p.id]
+                                : selectedProducts.filter(id => id !== p.id)
+                              )}
+                              className="rounded"
+                            />
+                            <span>{p.name}</span>
+                            <span className="ml-auto text-xs text-slate-400 capitalize">{p.unit_type}</span>
+                          </label>
+                        ))}
+                      </div>
+                      {selectedProducts.length > 0 && (
+                        <p className="text-xs text-slate-500 mt-1">{selectedProducts.length} selected</p>
+                      )}
+                    </div>
+                  )}
+
+                  <Button onClick={startAudit} className="w-full" disabled={creating}>
+                    <Plus className="h-4 w-4 mr-1" />
+                    {creating ? "Starting..." : "Start Audit"}
+                  </Button>
+                </>
+              )}
             </CardContent>
           </Card>
+
+          {/* In-progress audits panel */}
+          {inProgressAudits.length > 0 && (
+            <Card className="border-amber-200 bg-amber-50/40">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2 text-amber-700">
+                  <AlertTriangle className="h-4 w-4" />
+                  In Progress ({inProgressAudits.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {inProgressAudits.map(audit => (
+                  <div
+                    key={audit.id}
+                    className="flex items-center justify-between p-2.5 bg-white rounded-lg border border-amber-100"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-slate-700 capitalize">{audit.audit_type} audit</p>
+                      <p className="text-xs text-slate-400">
+                        {formatDate(audit.audit_date)} · {audit.items.length} products
+                      </p>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <Button
+                        size="sm" variant="outline"
+                        className="h-7 px-2.5 text-xs gap-1 text-blue-600 border-blue-200 hover:bg-blue-50"
+                        onClick={() => resumeAudit(audit)}
+                      >
+                        <Play className="h-3 w-3" />
+                        Resume
+                      </Button>
+                      <Button
+                        size="sm" variant="outline"
+                        className="h-7 px-2.5 text-xs gap-1 text-red-500 border-red-200 hover:bg-red-50"
+                        disabled={cancellingId === audit.id}
+                        onClick={() => cancelAudit(audit.id)}
+                      >
+                        <XCircle className="h-3 w-3" />
+                        {cancellingId === audit.id ? "…" : "Cancel"}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Audit History */}
         <div className="lg:col-span-2">
           <h3 className="font-semibold mb-3 text-slate-700">Audit History</h3>
-          {(() => {
-            const completed = audits.filter(a => a.status === "completed");
-            const pagedAudits = completed.slice(auditPage * auditPageSize, (auditPage + 1) * auditPageSize);
-            return (
           <div className="border rounded-lg overflow-hidden bg-white">
-            {completed.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">No completed audits yet</div>
+            {historyAudits.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">No audits yet</div>
             ) : (
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 border-b">
@@ -571,21 +729,22 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                     <th className="text-left p-3 font-medium text-slate-600">Type</th>
                     <th className="text-left p-3 font-medium text-slate-600">Conducted By</th>
                     <th className="text-left p-3 font-medium text-slate-600">Result</th>
+                    <th className="text-left p-3 font-medium text-slate-600">Status</th>
                     <th className="w-10" />
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {pagedAudits.map((audit) => {
                     const isExpanded = expandedAuditId === audit.id;
+                    const isCancelled = audit.status === "cancelled";
                     const flagged = audit.items.filter(i => !i.within_threshold).length;
                     return (
                       <React.Fragment key={audit.id}>
-                        {/* Summary row */}
                         <tr
-                          className={`cursor-pointer transition-colors hover:bg-slate-50 ${isExpanded ? "bg-slate-50" : ""}`}
-                          onClick={() => setExpandedAuditId(isExpanded ? null : audit.id)}
+                          className={`transition-colors ${isCancelled ? "opacity-50" : "cursor-pointer hover:bg-slate-50"} ${isExpanded && !isCancelled ? "bg-slate-50" : ""}`}
+                          onClick={() => !isCancelled && setExpandedAuditId(isExpanded ? null : audit.id)}
                         >
-                          <td className="p-3 font-medium text-slate-800 whitespace-nowrap">
+                          <td className={`p-3 font-medium whitespace-nowrap ${isCancelled ? "line-through text-slate-400" : "text-slate-800"}`}>
                             {formatDate(audit.audit_date)}
                           </td>
                           <td className="p-3">
@@ -595,19 +754,33 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                             {audit.conducted_by_profile?.full_name ?? "—"}
                           </td>
                           <td className="p-3">
-                            {audit.items?.length > 0 && auditSummaryPill(audit.items)}
+                            {!isCancelled && audit.items?.length > 0 && auditSummaryPill(audit.items)}
                           </td>
-                          <td className="p-3 text-slate-400 text-center">
-                            {isExpanded
-                              ? <ChevronUp className="h-4 w-4 inline" />
-                              : <ChevronDown className="h-4 w-4 inline" />}
+                          <td className="p-3">
+                            {statusBadge(audit.status)}
+                          </td>
+                          <td className="p-3 text-center">
+                            {isCancelled ? null : isExpanded
+                              ? <ChevronUp className="h-4 w-4 inline text-slate-400" />
+                              : <ChevronDown className="h-4 w-4 inline text-slate-400" />}
+                            {/* Void button — admin only, completed audits only */}
+                            {isAdmin && !isCancelled && (
+                              <button
+                                title="Void audit"
+                                className="ml-1 text-slate-300 hover:text-red-500 transition-colors"
+                                disabled={voidingId === audit.id}
+                                onClick={(e) => { e.stopPropagation(); voidAudit(audit.id); }}
+                              >
+                                <Ban className="h-3.5 w-3.5 inline" />
+                              </button>
+                            )}
                           </td>
                         </tr>
 
                         {/* Expanded detail */}
-                        {isExpanded && (
+                        {isExpanded && !isCancelled && (
                           <tr>
-                            <td colSpan={5} className="bg-blue-50/40 px-4 py-4 border-b border-blue-100">
+                            <td colSpan={6} className="bg-blue-50/40 px-4 py-4 border-b border-blue-100">
                               {flagged > 0 && (
                                 <div className="flex items-center gap-1.5 mb-3 text-xs text-amber-700 font-medium">
                                   <AlertTriangle className="h-3.5 w-3.5" />
@@ -672,9 +845,9 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                 </tbody>
               </table>
             )}
-            {completed.length > 0 && (
+            {historyAudits.length > 0 && (
               <TablePagination
-                total={completed.length}
+                total={historyAudits.length}
                 page={auditPage}
                 pageSize={auditPageSize}
                 onPageChange={(p) => { setAuditPage(p); setExpandedAuditId(null); }}
@@ -682,8 +855,6 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
               />
             )}
           </div>
-          );
-          })()}
         </div>
       </div>
     </div>
