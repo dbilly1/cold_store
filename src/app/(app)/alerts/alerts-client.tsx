@@ -79,32 +79,41 @@ export function AlertsClient({ alerts: initial }: { alerts: Alert[] }) {
 
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6">
-      <div className="flex items-center gap-3 mb-6">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
           <Bell className="h-4 w-4 text-amber-500" />
           <span className="font-semibold">{openCount} open alert{openCount !== 1 ? "s" : ""}</span>
         </div>
-        <div className="flex gap-2 ml-auto">
-          {openCount > 1 && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 text-blue-600 border-blue-200 hover:bg-blue-50"
-              disabled={acknowledgingAll}
-              onClick={acknowledgeAll}
-            >
-              <CheckCheck className="h-3.5 w-3.5" />
-              {acknowledgingAll ? "Acknowledging..." : `Acknowledge All (${openCount})`}
-            </Button>
-          )}
-          <div className="flex gap-1">
-            {(["open", "acknowledged", "resolved", "all"] as const).map((s) => (
-              <Button key={s} size="sm" variant={filter === s ? "default" : "outline"} onClick={() => setFilter(s)} className="capitalize h-8">
-                {s}
-              </Button>
-            ))}
-          </div>
-        </div>
+        {openCount > 1 && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-blue-600 border-blue-200 hover:bg-blue-50"
+            disabled={acknowledgingAll}
+            onClick={acknowledgeAll}
+          >
+            <CheckCheck className="h-3.5 w-3.5" />
+            {acknowledgingAll ? "Acknowledging..." : `Acknowledge All (${openCount})`}
+          </Button>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 border-b mb-5">
+        {(["open", "acknowledged", "all"] as const).map((s) => (
+          <button
+            key={s}
+            onClick={() => setFilter(s)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors capitalize ${
+              filter === s
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+            }`}
+          >
+            {s === "all" ? "All" : s === "open" ? "Open" : "Acknowledged"}
+          </button>
+        ))}
       </div>
 
       <div className="space-y-3">
@@ -124,7 +133,9 @@ export function AlertsClient({ alerts: initial }: { alerts: Alert[] }) {
                       </span>
                     )}
                     {alert.status === "acknowledged" && (
-                      <span className="text-xs text-blue-600">Acknowledged</span>
+                      <span className="text-xs text-blue-600 flex items-center gap-1">
+                        <CheckCircle className="h-3 w-3" /> Acknowledged
+                      </span>
                     )}
                   </div>
                   <p className="font-medium text-sm">{alert.title}</p>
@@ -132,9 +143,13 @@ export function AlertsClient({ alerts: initial }: { alerts: Alert[] }) {
                   <p className="text-xs text-muted-foreground mt-1">{formatDateTime(alert.created_at)}</p>
                 </div>
                 {alert.status === "open" && (
-                  <Button size="sm" variant="outline" className="h-7 text-xs flex-shrink-0" onClick={() => acknowledge(alert.id)}>
-                    Acknowledge
-                  </Button>
+                  <button
+                    title="Acknowledge"
+                    className="text-slate-300 hover:text-green-500 transition-colors flex-shrink-0"
+                    onClick={() => acknowledge(alert.id)}
+                  >
+                    <CheckCircle className="h-5 w-5" />
+                  </button>
                 )}
               </div>
             </CardContent>
