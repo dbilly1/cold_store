@@ -22,6 +22,7 @@ interface PriceHistoryRow {
   id: string;
   created_at: string;
   quantity_boxes: number;
+  units_per_box: number | null;
   cost_price_per_unit: number;
   cost_price_per_box: number | null;
   supplier: string | null;
@@ -55,7 +56,7 @@ const emptyProduct = {
 
 const emptyRestock = {
   quantity_primary: "", quantity_boxes: "",
-  cost_per_box: "", supplier: "", notes: "",
+  cost_per_box: "", units_per_box: "", supplier: "", notes: "",
 };
 
 interface BulkRestockRow {
@@ -64,6 +65,7 @@ interface BulkRestockRow {
   quantity_primary: string;
   quantity_boxes: string;
   cost_per_box: string;  // user enters cost per box; saved as cost per primary unit
+  units_per_box: string; // pre-filled from product; editable if supplier changes box size
   supplier: string;
 }
 
@@ -74,6 +76,7 @@ function emptyBulkRow(): BulkRestockRow {
     quantity_primary: "",
     quantity_boxes: "",
     cost_per_box: "",
+    units_per_box: "",
     supplier: "",
   };
 }
@@ -317,7 +320,9 @@ export function InventoryClient({ products: initial, categories }: { products: P
     setSaving(true);
     const supabase = createClient();
     const p = restockDialog.product;
-    const upb = p.units_per_box ?? 0;
+    // Use the form's units_per_box (pre-filled but editable); fall back to product's current value
+    const upb = parseFloat(restockForm.units_per_box) || (p.units_per_box ?? 0);
+    const upbChanged = upb > 0 && upb !== (p.units_per_box ?? 0);
 
     // Derive cost/unit: for boxes products cost/box IS cost/unit;
     // for kg/units divide by units_per_box; if no conversion factor treat as cost/unit
@@ -330,12 +335,18 @@ export function InventoryClient({ products: initial, categories }: { products: P
       : qPrimary + qBoxes * upb;
     const totalCost = primaryQty * costPerUnit;
 
+    // If units_per_box changed, update the product first so the trigger picks up the right value
+    if (upbChanged) {
+      await supabase.from("products").update({ units_per_box: upb, updated_at: new Date().toISOString() }).eq("id", p.id);
+    }
+
     const { error } = await supabase.from("stock_additions").insert({
       product_id: p.id,
       added_by: profile!.id,
       quantity_kg: p.unit_type === "kg" ? qPrimary : 0,
       quantity_units: p.unit_type === "units" ? qPrimary : 0,
       quantity_boxes: qBoxes,
+      units_per_box: upb || null,
       cost_price_per_unit: costPerUnit,
       cost_price_per_box: costPerBox,
       total_cost: totalCost,
@@ -385,12 +396,22 @@ export function InventoryClient({ products: initial, categories }: { products: P
     setBulkSaving(true);
     const supabase = createClient();
 
+    // Update products where units_per_box has changed
+    for (const row of bulkRows) {
+      const p = products.find((pr) => pr.id === row.product_id)!;
+      const rowUpb = parseFloat(row.units_per_box) || 0;
+      if (rowUpb > 0 && rowUpb !== (p.units_per_box ?? 0)) {
+        await supabase.from("products").update({ units_per_box: rowUpb, updated_at: new Date().toISOString() }).eq("id", p.id);
+      }
+    }
+
     const inserts = bulkRows.map((row) => {
       const p = products.find((pr) => pr.id === row.product_id)!;
       const qPrimary = parseFloat(row.quantity_primary) || 0;
       const qBoxes = parseFloat(row.quantity_boxes) || 0;
       const costPerBox = parseFloat(row.cost_per_box) || 0;
-      const upb = p.units_per_box ?? 0;
+      // Use row's units_per_box (editable); fall back to product's current value
+      const upb = parseFloat(row.units_per_box) || (p.units_per_box ?? 0);
       // Convert cost/box → cost/primary-unit for WAC calculation.
       // For "boxes" products and products without a box conversion, cost/box IS cost/unit.
       const costPerUnit = upb > 0 && p.unit_type !== "boxes"
@@ -406,6 +427,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
         quantity_kg: p.unit_type === "kg" ? qPrimary : 0,
         quantity_units: p.unit_type === "units" ? qPrimary : 0,
         quantity_boxes: qBoxes,
+        units_per_box: upb || null,
         cost_price_per_unit: costPerUnit,
         cost_price_per_box: costPerBox || null,
         total_cost: totalCost,
@@ -437,7 +459,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
     const supabase = createClient();
     const { data } = await supabase
       .from("stock_additions")
-      .select("id, created_at, quantity_boxes, cost_price_per_unit, cost_price_per_box, supplier")
+      .select("id, created_at, quantity_boxes, cost_price_per_unit, cost_price_per_box, units_per_box, supplier")
       .eq("product_id", product.id)
       .order("created_at", { ascending: false });
     setPriceHistory((data as PriceHistoryRow[]) ?? []);
@@ -609,7 +631,10 @@ export function InventoryClient({ products: initial, categories }: { products: P
                           <Edit className="h-3.5 w-3.5" />
                         </Button>
                         <Button size="sm" variant="ghost" className="text-green-600 hover:text-green-700"
-                          onClick={() => { setRestockForm(emptyRestock); setRestockDialog({ open: true, product }); }}>
+                          onClick={() => {
+                            setRestockForm({ ...emptyRestock, units_per_box: String(product.units_per_box ?? "") });
+                            setRestockDialog({ open: true, product });
+                          }}>
                           <PlusCircle className="h-3.5 w-3.5" />
                         </Button>
                       </div>
@@ -809,6 +834,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
                   <th className="pb-2 font-medium text-slate-500 min-w-[200px]">Product *</th>
                   <th className="pb-2 font-medium text-slate-500 w-32">Qty (primary)</th>
                   <th className="pb-2 font-medium text-slate-500 w-28">Boxes</th>
+                  <th className="pb-2 font-medium text-slate-500 w-24">Units/Box</th>
                   <th className="pb-2 font-medium text-slate-500 w-32">Cost / box *</th>
                   <th className="pb-2 font-medium text-slate-500 w-32 text-right">Total Cost</th>
                   <th className="pb-2 pl-6 font-medium text-slate-500">Supplier</th>
@@ -818,7 +844,8 @@ export function InventoryClient({ products: initial, categories }: { products: P
               <tbody>
                 {bulkRows.map((row, idx) => {
                   const selectedProduct = products.find((p) => p.id === row.product_id) ?? null;
-                  const upb = selectedProduct?.units_per_box ?? 0;
+                  // Use the row's editable units_per_box; fall back to product's current value
+                  const upb = parseFloat(row.units_per_box) || (selectedProduct?.units_per_box ?? 0);
                   const ut = selectedProduct?.unit_type;
                   const qPrimary = parseFloat(row.quantity_primary) || 0;
                   const qBoxes = parseFloat(row.quantity_boxes) || 0;
@@ -839,13 +866,14 @@ export function InventoryClient({ products: initial, categories }: { products: P
                       <td className="px-2 py-2 align-top">
                         <Select
                           value={row.product_id}
-                          onValueChange={(v) =>
+                          onValueChange={(v) => {
+                            const prod = products.find((p) => p.id === v);
                             setBulkRows(bulkRows.map((r) =>
                               r.rowId === row.rowId
-                                ? { ...r, product_id: v, quantity_primary: "", quantity_boxes: "" }
+                                ? { ...r, product_id: v, quantity_primary: "", quantity_boxes: "", units_per_box: String(prod?.units_per_box ?? "") }
                                 : r,
-                            ))
-                          }
+                            ));
+                          }}
                         >
                           <SelectTrigger className="h-8 text-xs">
                             <SelectValue placeholder="Select product..." />
@@ -904,6 +932,38 @@ export function InventoryClient({ products: initial, categories }: { products: P
                           <p className="text-[10px] text-blue-600 mt-0.5">
                             = {(qBoxes * upb).toFixed(ut === "kg" ? 3 : 0)} {ut === "kg" ? "kg" : "units"}
                           </p>
+                        )}
+                      </td>
+
+                      {/* Units per box */}
+                      <td className="px-2 py-2 align-top">
+                        {ut !== "boxes" ? (
+                          <>
+                            <Input
+                              type="number"
+                              min="0.001"
+                              step="0.001"
+                              placeholder="0"
+                              value={row.units_per_box}
+                              onChange={(e) =>
+                                setBulkRows(bulkRows.map((r) =>
+                                  r.rowId === row.rowId ? { ...r, units_per_box: e.target.value } : r,
+                                ))
+                              }
+                              className={`h-8 text-xs ${
+                                row.units_per_box &&
+                                parseFloat(row.units_per_box) !== (selectedProduct?.units_per_box ?? 0)
+                                  ? "border-amber-400"
+                                  : ""
+                              }`}
+                            />
+                            {row.units_per_box &&
+                              parseFloat(row.units_per_box) !== (selectedProduct?.units_per_box ?? 0) && (
+                                <p className="text-[10px] text-amber-600 mt-0.5">Changed</p>
+                              )}
+                          </>
+                        ) : (
+                          <span className="text-slate-300 text-xs block text-center pt-2">—</span>
                         )}
                       </td>
 
@@ -1071,6 +1131,23 @@ export function InventoryClient({ products: initial, categories }: { products: P
                 </p>
               )}
 
+              {restockProduct.unit_type !== "boxes" && (
+                <div>
+                  <Label>Units per Box</Label>
+                  <Input
+                    type="number" min="0" step="0.001"
+                    value={restockForm.units_per_box}
+                    onChange={(e) => setRestockForm({ ...restockForm, units_per_box: e.target.value })}
+                    placeholder={String(restockProduct.units_per_box ?? "")}
+                  />
+                  {parseFloat(restockForm.units_per_box) > 0 &&
+                   parseFloat(restockForm.units_per_box) !== (restockProduct.units_per_box ?? 0) && (
+                    <p className="text-xs text-amber-600 mt-0.5">
+                      ⚠ Changed from {restockProduct.units_per_box} — product will be updated
+                    </p>
+                  )}
+                </div>
+              )}
               <div>
                 <Label>Cost per Box *</Label>
                 <Input
@@ -1081,7 +1158,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
                 />
                 {(() => {
                   const cpb = parseFloat(restockForm.cost_per_box);
-                  const upb = restockProduct.units_per_box ?? 0;
+                  const upb = parseFloat(restockForm.units_per_box) || (restockProduct.units_per_box ?? 0);
                   if (!cpb || cpb <= 0 || restockProduct.unit_type === "boxes" || upb === 0) return null;
                   return (
                     <p className="text-xs text-slate-400 mt-0.5">
@@ -1146,17 +1223,21 @@ export function InventoryClient({ products: initial, categories }: { products: P
                 <tbody className="divide-y">
                   {priceHistory.map((row, idx) => {
                     const p = priceHistoryDialog.product!;
-                    const upb = p.units_per_box ?? 0;
+                    // Use stored upb for this row; fall back to current product value
+                    const upb = row.units_per_box ?? p.units_per_box ?? 0;
                     const costBox = row.cost_price_per_box ??
                       (p.unit_type === "boxes" ? row.cost_price_per_unit :
                        upb > 0 ? row.cost_price_per_unit * upb : null);
 
                     // idx + 1 = older row (list is newest-first)
                     const olderRow = priceHistory[idx + 1];
+                    const olderUpb = olderRow
+                      ? (olderRow.units_per_box ?? p.units_per_box ?? 0)
+                      : 0;
                     const prevCostBox = olderRow
                       ? (olderRow.cost_price_per_box ??
                           (p.unit_type === "boxes" ? olderRow.cost_price_per_unit :
-                           upb > 0 ? olderRow.cost_price_per_unit * upb : null))
+                           olderUpb > 0 ? olderRow.cost_price_per_unit * olderUpb : null))
                       : null;
 
                     const pct = costBox != null && prevCostBox != null && prevCostBox > 0

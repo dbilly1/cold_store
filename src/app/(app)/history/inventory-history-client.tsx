@@ -42,6 +42,7 @@ interface StockAdditionRow {
   quantity_boxes: number;
   cost_price_per_unit: number;
   cost_price_per_box: number | null;
+  units_per_box: number | null;
   total_cost: number;
   supplier: string | null;
   notes: string | null;
@@ -125,11 +126,13 @@ function primaryQtyLabel(row: StockAdditionRow): string {
   return `${Number(row.quantity_boxes)} boxes`;
 }
 
-// Resolve cost/box for a row using stored value or fallback calculation
+// Resolve cost/box for a row using stored value or fallback calculation.
+// Prefers the units_per_box stored on the row itself (accurate at restock time);
+// falls back to the current product value for older records.
 function resolveCostPerBox(row: StockAdditionRow): number | null {
   if (row.cost_price_per_box != null) return row.cost_price_per_box;
-  const upb = row.product?.units_per_box ?? 0;
   if (row.product?.unit_type === "boxes") return row.cost_price_per_unit;
+  const upb = row.units_per_box ?? row.product?.units_per_box ?? 0;
   if (upb > 0) return row.cost_price_per_unit * upb;
   return null;
 }
@@ -260,7 +263,7 @@ export function InventoryHistoryClient() {
       .from("stock_additions")
       .select(`
         id, created_at, quantity_kg, quantity_units, quantity_boxes,
-        cost_price_per_unit, cost_price_per_box, total_cost, supplier, notes,
+        cost_price_per_unit, cost_price_per_box, units_per_box, total_cost, supplier, notes,
         product:products(id, name, unit_type, units_per_box),
         added_by_profile:profiles!added_by(full_name)
       `)
@@ -474,8 +477,8 @@ export function InventoryHistoryClient() {
           r.quantity_boxes,
           (() => {
               if (r.cost_price_per_box != null) return r.cost_price_per_box.toFixed(2);
-              const upb = r.product?.units_per_box ?? 0;
               if (r.product?.unit_type === "boxes") return r.cost_price_per_unit.toFixed(2);
+              const upb = r.units_per_box ?? r.product?.units_per_box ?? 0;
               if (upb > 0) return (r.cost_price_per_unit * upb).toFixed(2);
               return "";
             })(),
@@ -506,8 +509,8 @@ export function InventoryHistoryClient() {
         r.quantity_boxes,
         (() => {
           if (r.cost_price_per_box != null) return r.cost_price_per_box;
-          const upb = r.product?.units_per_box ?? 0;
           if (r.product?.unit_type === "boxes") return r.cost_price_per_unit;
+          const upb = r.units_per_box ?? r.product?.units_per_box ?? 0;
           if (upb > 0) return r.cost_price_per_unit * upb;
           return "";
         })(),
