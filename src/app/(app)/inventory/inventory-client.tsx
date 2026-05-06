@@ -12,10 +12,20 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { formatCurrency } from "@/lib/utils";
-import { Plus, Package, TrendingUp, Edit, PlusCircle, Search, Truck, Trash2, ArrowUpDown, X } from "lucide-react";
+import { Plus, Package, TrendingUp, Edit, PlusCircle, Search, Truck, Trash2, ArrowUpDown, X, History } from "lucide-react";
+import { format, parseISO } from "date-fns";
 import type { UnitType } from "@/types/database";
 
 interface Category { id: string; name: string; }
+
+interface PriceHistoryRow {
+  id: string;
+  created_at: string;
+  quantity_boxes: number;
+  cost_price_per_unit: number;
+  cost_price_per_box: number | null;
+  supplier: string | null;
+}
 interface Product {
   id: string;
   name: string;
@@ -112,6 +122,9 @@ export function InventoryClient({ products: initial, categories }: { products: P
   const [bulkRestockDialog, setBulkRestockDialog] = useState(false);
   const [bulkRows, setBulkRows] = useState<BulkRestockRow[]>(() => [emptyBulkRow()]);
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [priceHistoryDialog, setPriceHistoryDialog] = useState<{ open: boolean; product: Product | null }>({ open: false, product: null });
+  const [priceHistory, setPriceHistory] = useState<PriceHistoryRow[]>([]);
+  const [loadingPriceHistory, setLoadingPriceHistory] = useState(false);
 
   const canEdit = profile?.role === "admin" || profile?.role === "supervisor";
 
@@ -417,6 +430,20 @@ export function InventoryClient({ products: initial, categories }: { products: P
     setBulkSaving(false);
   }
 
+  async function openPriceHistory(product: Product) {
+    setPriceHistoryDialog({ open: true, product });
+    setPriceHistory([]);
+    setLoadingPriceHistory(true);
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("stock_additions")
+      .select("id, created_at, quantity_boxes, cost_price_per_unit, cost_price_per_box, supplier")
+      .eq("product_id", product.id)
+      .order("created_at", { ascending: false });
+    setPriceHistory((data as PriceHistoryRow[]) ?? []);
+    setLoadingPriceHistory(false);
+  }
+
   const openEdit = (product: Product) => {
     setEditProduct(product);
     setProductForm({
@@ -575,6 +602,9 @@ export function InventoryClient({ products: initial, categories }: { products: P
                   {canEdit && (
                     <td className="p-3">
                       <div className="flex items-center justify-center gap-1">
+                        <Button size="sm" variant="ghost" title="Price history" onClick={() => openPriceHistory(product)}>
+                          <History className="h-3.5 w-3.5 text-blue-400" />
+                        </Button>
                         <Button size="sm" variant="ghost" onClick={() => openEdit(product)}>
                           <Edit className="h-3.5 w-3.5" />
                         </Button>
@@ -1082,6 +1112,89 @@ export function InventoryClient({ products: initial, categories }: { products: P
             <Button variant="outline" onClick={() => setRestockDialog({ open: false, product: null })}>Cancel</Button>
             <Button onClick={handleRestock} disabled={saving}>{saving ? "Saving..." : "Add Stock"}</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Price History Dialog ── */}
+      <Dialog
+        open={priceHistoryDialog.open}
+        onOpenChange={(open) => !open && setPriceHistoryDialog({ open: false, product: null })}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-4 w-4 text-blue-400" />
+              Price History — {priceHistoryDialog.product?.name}
+            </DialogTitle>
+          </DialogHeader>
+
+          {loadingPriceHistory ? (
+            <p className="text-sm text-center py-8 text-muted-foreground">Loading...</p>
+          ) : priceHistory.length === 0 ? (
+            <p className="text-sm text-center py-8 text-muted-foreground">No restocks recorded yet</p>
+          ) : (
+            <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b sticky top-0">
+                  <tr>
+                    <th className="text-left px-3 py-2.5 font-medium text-slate-500 text-xs">Date</th>
+                    <th className="text-right px-3 py-2.5 font-medium text-slate-500 text-xs">Cost / Box</th>
+                    <th className="text-right px-3 py-2.5 font-medium text-slate-500 text-xs">vs Previous</th>
+                    <th className="text-left px-3 py-2.5 font-medium text-slate-500 text-xs">Supplier</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {priceHistory.map((row, idx) => {
+                    const p = priceHistoryDialog.product!;
+                    const upb = p.units_per_box ?? 0;
+                    const costBox = row.cost_price_per_box ??
+                      (p.unit_type === "boxes" ? row.cost_price_per_unit :
+                       upb > 0 ? row.cost_price_per_unit * upb : null);
+
+                    // idx + 1 = older row (list is newest-first)
+                    const olderRow = priceHistory[idx + 1];
+                    const prevCostBox = olderRow
+                      ? (olderRow.cost_price_per_box ??
+                          (p.unit_type === "boxes" ? olderRow.cost_price_per_unit :
+                           upb > 0 ? olderRow.cost_price_per_unit * upb : null))
+                      : null;
+
+                    const pct = costBox != null && prevCostBox != null && prevCostBox > 0
+                      ? ((costBox - prevCostBox) / prevCostBox) * 100
+                      : null;
+                    const up = pct != null && pct > 0;
+                    const same = pct != null && Math.abs(pct) < 0.01;
+
+                    return (
+                      <tr key={row.id} className="hover:bg-slate-50">
+                        <td className="px-3 py-2.5 text-xs text-slate-600 whitespace-nowrap">
+                          {format(parseISO(row.created_at), "d MMM yyyy")}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-semibold">
+                          {costBox != null ? formatCurrency(costBox) : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-3 py-2.5 text-right text-xs">
+                          {pct == null ? (
+                            <span className="text-slate-300">First</span>
+                          ) : same ? (
+                            <span className="text-slate-400">No change</span>
+                          ) : (
+                            <div className={`leading-tight ${up ? "text-red-600" : "text-green-600"}`}>
+                              <span className="text-slate-400">prev. {formatCurrency(prevCostBox!)}</span>
+                              <span className="ml-1 font-semibold">{up ? " ↑" : " ↓"}{Math.abs(pct).toFixed(1)}%</span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 text-xs text-slate-500">
+                          {row.supplier ?? <span className="text-slate-300">—</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

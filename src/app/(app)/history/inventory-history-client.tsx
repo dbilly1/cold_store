@@ -125,6 +125,35 @@ function primaryQtyLabel(row: StockAdditionRow): string {
   return `${Number(row.quantity_boxes)} boxes`;
 }
 
+// Resolve cost/box for a row using stored value or fallback calculation
+function resolveCostPerBox(row: StockAdditionRow): number | null {
+  if (row.cost_price_per_box != null) return row.cost_price_per_box;
+  const upb = row.product?.units_per_box ?? 0;
+  if (row.product?.unit_type === "boxes") return row.cost_price_per_unit;
+  if (upb > 0) return row.cost_price_per_unit * upb;
+  return null;
+}
+
+// Find the most recent prior restock of the same product within the loaded set
+function prevCostInfo(
+  row: StockAdditionRow,
+  allRestocks: StockAdditionRow[],
+): { prevCost: number; pct: number } | null {
+  const currCost = resolveCostPerBox(row);
+  if (currCost == null) return null;
+
+  const prev = allRestocks
+    .filter(r => r.product?.id === row.product?.id && r.created_at < row.created_at)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+  if (!prev) return null;
+
+  const prevCost = resolveCostPerBox(prev);
+  if (prevCost == null) return null;
+
+  const pct = prevCost > 0 ? ((currCost - prevCost) / prevCost) * 100 : 0;
+  return { prevCost, pct };
+}
+
 function deltaLabel(row: StockAdjustmentRow): { text: string; positive: boolean } {
   if (!row.product) return { text: "—", positive: true };
   let val = 0;
@@ -880,6 +909,7 @@ export function InventoryHistoryClient() {
                       <th className="text-right px-4 py-2.5 font-medium text-slate-500 text-xs">Qty Added</th>
                       <th className="text-right px-4 py-2.5 font-medium text-slate-500 text-xs">Boxes</th>
                       <th className="text-right px-4 py-2.5 font-medium text-slate-500 text-xs">Cost/Box</th>
+                      <th className="text-right px-4 py-2.5 font-medium text-slate-500 text-xs">vs Previous</th>
                       <th className="text-right px-4 py-2.5 font-medium text-slate-500 text-xs">Cost/Unit</th>
                       <th className="text-right px-4 py-2.5 font-medium text-slate-500 text-xs">Total Cost</th>
                       <th className="text-left px-4 py-2.5 font-medium text-slate-500 text-xs">Supplier</th>
@@ -909,6 +939,21 @@ export function InventoryHistoryClient() {
                               </span>
                             );
                             return <span className="text-slate-300">—</span>;
+                          })()}
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          {(() => {
+                            const info = prevCostInfo(row, restocks);
+                            if (!info) return <span className="text-slate-300 text-xs">—</span>;
+                            const { prevCost, pct } = info;
+                            if (Math.abs(pct) < 0.01) return <span className="text-slate-400 text-xs">No change</span>;
+                            const up = pct > 0;
+                            return (
+                              <div className={`text-xs leading-tight ${up ? "text-red-600" : "text-green-600"}`}>
+                                <span className="text-slate-400">prev. {formatCurrency(prevCost)}</span>
+                                <span className="ml-1 font-semibold">{up ? "↑" : "↓"}{Math.abs(pct).toFixed(1)}%</span>
+                              </div>
+                            );
                           })()}
                         </td>
                         <td className="px-4 py-2.5 text-right text-slate-500">{formatCurrency(row.cost_price_per_unit)}</td>
