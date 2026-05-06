@@ -41,10 +41,11 @@ interface StockAdditionRow {
   quantity_units: number;
   quantity_boxes: number;
   cost_price_per_unit: number;
+  cost_price_per_box: number | null;
   total_cost: number;
   supplier: string | null;
   notes: string | null;
-  product: { id: string; name: string; unit_type: string } | null;
+  product: { id: string; name: string; unit_type: string; units_per_box: number | null } | null;
   added_by_profile: { full_name: string } | null;
 }
 
@@ -230,8 +231,8 @@ export function InventoryHistoryClient() {
       .from("stock_additions")
       .select(`
         id, created_at, quantity_kg, quantity_units, quantity_boxes,
-        cost_price_per_unit, total_cost, supplier, notes,
-        product:products(id, name, unit_type),
+        cost_price_per_unit, cost_price_per_box, total_cost, supplier, notes,
+        product:products(id, name, unit_type, units_per_box),
         added_by_profile:profiles!added_by(full_name)
       `)
       .gte("created_at", dateFrom + "T00:00:00")
@@ -435,13 +436,14 @@ export function InventoryHistoryClient() {
   // ── Export restocks CSV ───────────────────────────────────────
   function exportRestocksCSV() {
     const rows = [
-      "Date,Product,Qty Added,Boxes,Cost/Unit,Total Cost,Supplier,Notes,Added By",
+      "Date,Product,Qty Added,Boxes,Cost/Box,Cost/Unit,Total Cost,Supplier,Notes,Added By",
       ...restocks.map((r) =>
         [
           format(parseISO(r.created_at), "yyyy-MM-dd HH:mm"),
           `"${r.product?.name ?? ""}"`,
           primaryQtyLabel(r),
           r.quantity_boxes,
+          r.cost_price_per_box != null ? r.cost_price_per_box.toFixed(2) : "",
           r.cost_price_per_unit.toFixed(2),
           r.total_cost.toFixed(2),
           `"${r.supplier ?? ""}"`,
@@ -461,12 +463,13 @@ export function InventoryHistoryClient() {
 
   function exportRestocksXLSX() {
     const data = [
-      ["Date", "Product", "Qty Added", "Boxes", "Cost/Unit", "Total Cost", "Supplier", "Notes", "Added By"],
+      ["Date", "Product", "Qty Added", "Boxes", "Cost/Box", "Cost/Unit", "Total Cost", "Supplier", "Notes", "Added By"],
       ...restocks.map((r) => [
         format(parseISO(r.created_at), "yyyy-MM-dd HH:mm"),
         r.product?.name ?? "",
         primaryQtyLabel(r),
         r.quantity_boxes,
+        r.cost_price_per_box ?? "",
         r.cost_price_per_unit,
         r.total_cost,
         r.supplier ?? "",
@@ -864,6 +867,7 @@ export function InventoryHistoryClient() {
                       <th className="text-left px-4 py-2.5 font-medium text-slate-500 text-xs">Product</th>
                       <th className="text-right px-4 py-2.5 font-medium text-slate-500 text-xs">Qty Added</th>
                       <th className="text-right px-4 py-2.5 font-medium text-slate-500 text-xs">Boxes</th>
+                      <th className="text-right px-4 py-2.5 font-medium text-slate-500 text-xs">Cost/Box</th>
                       <th className="text-right px-4 py-2.5 font-medium text-slate-500 text-xs">Cost/Unit</th>
                       <th className="text-right px-4 py-2.5 font-medium text-slate-500 text-xs">Total Cost</th>
                       <th className="text-left px-4 py-2.5 font-medium text-slate-500 text-xs">Supplier</th>
@@ -882,7 +886,12 @@ export function InventoryHistoryClient() {
                         <td className="px-4 py-2.5 text-right text-slate-600">
                           {row.quantity_boxes > 0 ? row.quantity_boxes : <span className="text-slate-300">—</span>}
                         </td>
-                        <td className="px-4 py-2.5 text-right">{formatCurrency(row.cost_price_per_unit)}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          {row.cost_price_per_box != null
+                            ? formatCurrency(row.cost_price_per_box)
+                            : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-slate-500">{formatCurrency(row.cost_price_per_unit)}</td>
                         <td className="px-4 py-2.5 text-right font-semibold">{formatCurrency(row.total_cost)}</td>
                         <td className="px-4 py-2.5 text-slate-600 text-xs">{row.supplier ?? <span className="text-slate-300">—</span>}</td>
                         <td className="px-4 py-2.5 text-slate-600 text-xs">{row.notes ?? <span className="text-slate-300">—</span>}</td>

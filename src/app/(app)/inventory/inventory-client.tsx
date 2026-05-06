@@ -226,6 +226,11 @@ export function InventoryClient({ products: initial, categories }: { products: P
         const primaryQty = qPrimary + qBoxes * (newProduct.units_per_box ?? 0);
         const totalCost = primaryQty * cost;
 
+        const upb = newProduct.units_per_box ?? 0;
+        const openingCostPerBox = newProduct.unit_type === "boxes"
+          ? cost
+          : upb > 0 ? cost * upb : null;
+
         const stockEntry = {
           product_id: newProduct.id,
           added_by: profile!.id,
@@ -233,6 +238,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
           quantity_units: productForm.unit_type === "units" ? qPrimary : 0,
           quantity_boxes: qBoxes,
           cost_price_per_unit: cost,
+          cost_price_per_box: openingCostPerBox,
           total_cost: totalCost || cost * qBoxes,
           notes: "Opening stock",
         };
@@ -301,6 +307,11 @@ export function InventoryClient({ products: initial, categories }: { products: P
     const primaryQty = qPrimary + qBoxes * (p.units_per_box ?? 0);
     const totalCost = primaryQty * cost;
 
+    // cost_price_per_box: for boxes products cost/box = cost/unit; for kg/units multiply back up
+    const costPerBox = p.unit_type === "boxes"
+      ? cost
+      : (p.units_per_box ?? 0) > 0 ? cost * (p.units_per_box ?? 0) : null;
+
     const { error } = await supabase.from("stock_additions").insert({
       product_id: p.id,
       added_by: profile!.id,
@@ -308,6 +319,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
       quantity_units: p.unit_type === "units" ? qPrimary : 0,
       quantity_boxes: qBoxes,
       cost_price_per_unit: cost,
+      cost_price_per_box: costPerBox,
       total_cost: totalCost,
       supplier: restockForm.supplier || null,
       notes: restockForm.notes || null,
@@ -377,6 +389,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
         quantity_units: p.unit_type === "units" ? qPrimary : 0,
         quantity_boxes: qBoxes,
         cost_price_per_unit: costPerUnit,
+        cost_price_per_box: costPerBox || null,
         total_cost: totalCost,
         supplier: row.supplier.trim() || null,
         notes: null,
