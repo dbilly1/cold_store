@@ -1118,7 +1118,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
       {/* ── Price History Dialog ── */}
       <Dialog
         open={priceHistoryDialog.open}
-        onOpenChange={(open) => !open && setPriceHistoryDialog({ open: false, product: null })}
+        onOpenChange={(open) => !open && setPriceHistoryDialog(prev => ({ ...prev, open: false }))}
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
