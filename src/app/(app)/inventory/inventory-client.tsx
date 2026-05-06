@@ -45,7 +45,7 @@ const emptyProduct = {
 
 const emptyRestock = {
   quantity_primary: "", quantity_boxes: "",
-  cost_price_per_unit: "", supplier: "", notes: "",
+  cost_per_box: "", supplier: "", notes: "",
 };
 
 interface BulkRestockRow {
@@ -289,9 +289,9 @@ export function InventoryClient({ products: initial, categories }: { products: P
   // ---------- Restock ----------
   async function handleRestock() {
     if (!restockDialog.product) return;
-    const cost = parseFloat(restockForm.cost_price_per_unit);
-    if (!cost || cost <= 0) {
-      toast({ title: "Cost price required", variant: "destructive" });
+    const costPerBox = parseFloat(restockForm.cost_per_box);
+    if (!costPerBox || costPerBox <= 0) {
+      toast({ title: "Cost per box required", variant: "destructive" });
       return;
     }
     const qPrimary = parseFloat(restockForm.quantity_primary) || 0;
@@ -304,13 +304,18 @@ export function InventoryClient({ products: initial, categories }: { products: P
     setSaving(true);
     const supabase = createClient();
     const p = restockDialog.product;
-    const primaryQty = qPrimary + qBoxes * (p.units_per_box ?? 0);
-    const totalCost = primaryQty * cost;
+    const upb = p.units_per_box ?? 0;
 
-    // cost_price_per_box: for boxes products cost/box = cost/unit; for kg/units multiply back up
-    const costPerBox = p.unit_type === "boxes"
-      ? cost
-      : (p.units_per_box ?? 0) > 0 ? cost * (p.units_per_box ?? 0) : null;
+    // Derive cost/unit: for boxes products cost/box IS cost/unit;
+    // for kg/units divide by units_per_box; if no conversion factor treat as cost/unit
+    const costPerUnit = p.unit_type === "boxes" || upb === 0
+      ? costPerBox
+      : costPerBox / upb;
+
+    const primaryQty = p.unit_type === "boxes"
+      ? qBoxes
+      : qPrimary + qBoxes * upb;
+    const totalCost = primaryQty * costPerUnit;
 
     const { error } = await supabase.from("stock_additions").insert({
       product_id: p.id,
@@ -318,7 +323,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
       quantity_kg: p.unit_type === "kg" ? qPrimary : 0,
       quantity_units: p.unit_type === "units" ? qPrimary : 0,
       quantity_boxes: qBoxes,
-      cost_price_per_unit: cost,
+      cost_price_per_unit: costPerUnit,
       cost_price_per_box: costPerBox,
       total_cost: totalCost,
       supplier: restockForm.supplier || null,
@@ -332,7 +337,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
       await supabase.from("audit_logs").insert({
         user_id: profile!.id, action: "ADD_STOCK", entity_type: "products",
         entity_id: p.id,
-        new_value: { quantity_primary: qPrimary, quantity_boxes: qBoxes, cost, unit_type: p.unit_type },
+        new_value: { quantity_primary: qPrimary, quantity_boxes: qBoxes, cost_per_box: costPerBox, cost_per_unit: costPerUnit, unit_type: p.unit_type },
       });
       const { data } = await supabase.from("products").select(`id, name, unit_type, units_per_box, current_stock_kg, current_stock_units, current_stock_boxes, weighted_avg_cost, selling_price, low_stock_threshold, variance_threshold_pct, is_active, created_at, category:categories(id, name)`).order("name");
       if (data) setProducts(data as unknown as Product[]);
@@ -1037,13 +1042,23 @@ export function InventoryClient({ products: initial, categories }: { products: P
               )}
 
               <div>
-                <Label>Cost Price (per {primaryLabel(restockProduct.unit_type)}) *</Label>
+                <Label>Cost per Box *</Label>
                 <Input
                   type="number" min="0" step="0.01"
-                  value={restockForm.cost_price_per_unit}
-                  onChange={(e) => setRestockForm({ ...restockForm, cost_price_per_unit: e.target.value })}
+                  value={restockForm.cost_per_box}
+                  onChange={(e) => setRestockForm({ ...restockForm, cost_per_box: e.target.value })}
                   placeholder="0.00"
                 />
+                {(() => {
+                  const cpb = parseFloat(restockForm.cost_per_box);
+                  const upb = restockProduct.units_per_box ?? 0;
+                  if (!cpb || cpb <= 0 || restockProduct.unit_type === "boxes" || upb === 0) return null;
+                  return (
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      = {formatCurrency(cpb / upb)} per {restockProduct.unit_type === "kg" ? "kg" : "unit"}
+                    </p>
+                  );
+                })()}
               </div>
               <div>
                 <Label>Supplier</Label>

@@ -443,7 +443,13 @@ export function InventoryHistoryClient() {
           `"${r.product?.name ?? ""}"`,
           primaryQtyLabel(r),
           r.quantity_boxes,
-          r.cost_price_per_box != null ? r.cost_price_per_box.toFixed(2) : "",
+          (() => {
+              if (r.cost_price_per_box != null) return r.cost_price_per_box.toFixed(2);
+              const upb = r.product?.units_per_box ?? 0;
+              if (r.product?.unit_type === "boxes") return r.cost_price_per_unit.toFixed(2);
+              if (upb > 0) return (r.cost_price_per_unit * upb).toFixed(2);
+              return "";
+            })(),
           r.cost_price_per_unit.toFixed(2),
           r.total_cost.toFixed(2),
           `"${r.supplier ?? ""}"`,
@@ -469,7 +475,13 @@ export function InventoryHistoryClient() {
         r.product?.name ?? "",
         primaryQtyLabel(r),
         r.quantity_boxes,
-        r.cost_price_per_box ?? "",
+        (() => {
+          if (r.cost_price_per_box != null) return r.cost_price_per_box;
+          const upb = r.product?.units_per_box ?? 0;
+          if (r.product?.unit_type === "boxes") return r.cost_price_per_unit;
+          if (upb > 0) return r.cost_price_per_unit * upb;
+          return "";
+        })(),
         r.cost_price_per_unit,
         r.total_cost,
         r.supplier ?? "",
@@ -887,9 +899,17 @@ export function InventoryHistoryClient() {
                           {row.quantity_boxes > 0 ? row.quantity_boxes : <span className="text-slate-300">—</span>}
                         </td>
                         <td className="px-4 py-2.5 text-right">
-                          {row.cost_price_per_box != null
-                            ? formatCurrency(row.cost_price_per_box)
-                            : <span className="text-slate-300">—</span>}
+                          {(() => {
+                            if (row.cost_price_per_box != null) return formatCurrency(row.cost_price_per_box);
+                            const upb = row.product?.units_per_box ?? 0;
+                            if (row.product?.unit_type === "boxes") return formatCurrency(row.cost_price_per_unit);
+                            if (upb > 0) return (
+                              <span className="text-slate-400" title="Calculated from cost/unit">
+                                {formatCurrency(row.cost_price_per_unit * upb)}
+                              </span>
+                            );
+                            return <span className="text-slate-300">—</span>;
+                          })()}
                         </td>
                         <td className="px-4 py-2.5 text-right text-slate-500">{formatCurrency(row.cost_price_per_unit)}</td>
                         <td className="px-4 py-2.5 text-right font-semibold">{formatCurrency(row.total_cost)}</td>
