@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate } from "@/lib/utils";
 import {
@@ -129,6 +130,7 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
   const [confirmNewAudit, setConfirmNewAudit] = useState(false); // Duplicate day warning
   const [cancellingId, setCancellingId] = useState<string | null>(null); // Cancel/void in progress
   const [voidingId, setVoidingId] = useState<string | null>(null);
+  const [confirmVoidId, setConfirmVoidId] = useState<string | null>(null); // Awaiting void confirmation
 
   const isAdmin = profile?.role === "admin" || profile?.role === "supervisor";
   const today = todayStr();
@@ -766,7 +768,7 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
                                 title="Void audit"
                                 className="ml-1 text-slate-300 hover:text-red-500 transition-colors"
                                 disabled={voidingId === audit.id}
-                                onClick={(e) => { e.stopPropagation(); voidAudit(audit.id); }}
+                                onClick={(e) => { e.stopPropagation(); setConfirmVoidId(audit.id); }}
                               >
                                 <Ban className="h-3.5 w-3.5 inline" />
                               </button>
@@ -854,6 +856,43 @@ export function AuditsClient({ products, audits: initial }: { products: Product[
           </div>
         </div>
       </div>
+
+      {/* ── Void Confirmation Dialog ── */}
+      <Dialog open={!!confirmVoidId} onOpenChange={(open) => !open && setConfirmVoidId(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <Ban className="h-4 w-4" />
+              Void Audit?
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">
+            This will permanently mark the audit as <span className="font-semibold">voided</span> and remove it from history and loss analysis. This action cannot be undone from the app.
+          </p>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setConfirmVoidId(null)}
+              disabled={!!voidingId}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!!voidingId}
+              onClick={() => {
+                if (confirmVoidId) {
+                  voidAudit(confirmVoidId);
+                  setConfirmVoidId(null);
+                }
+              }}
+            >
+              {voidingId ? "Voiding..." : "Yes, Void Audit"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }
