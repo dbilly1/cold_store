@@ -732,6 +732,46 @@ export function CreditClient({
         {!selectedCustomer ? (
           /* ── Aggregate: all-customer transaction feed ── */
           <div className="flex-1 overflow-y-auto p-4 md:p-6">
+            {/* Summary cards */}
+            {(() => {
+              const totalCredit = creditSales.reduce((s, x) => s + x.total_amount, 0);
+              const totalPaid   = payments.reduce((s, x) => s + x.amount, 0);
+              const totalOutstanding = totalCredit - totalPaid;
+              const activeCount = customers.filter((c) => getBalance(c.id).outstanding > 0.005).length;
+              return (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                  <Card className="border-red-100 bg-red-50">
+                    <CardContent className="p-3">
+                      <p className="text-xs font-medium text-red-600">Total Outstanding</p>
+                      <p className="text-lg font-bold text-red-700 truncate">{formatCurrency(totalOutstanding)}</p>
+                      <p className="text-xs text-red-500">{activeCount} customer{activeCount !== 1 ? "s" : ""}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-slate-100">
+                    <CardContent className="p-3">
+                      <p className="text-xs font-medium text-slate-500">Total Credit Given</p>
+                      <p className="text-lg font-bold text-slate-800 truncate">{formatCurrency(totalCredit)}</p>
+                      <p className="text-xs text-slate-400">{creditSales.length} sale{creditSales.length !== 1 ? "s" : ""}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-green-100 bg-green-50">
+                    <CardContent className="p-3">
+                      <p className="text-xs font-medium text-green-600">Total Collected</p>
+                      <p className="text-lg font-bold text-green-700 truncate">{formatCurrency(totalPaid)}</p>
+                      <p className="text-xs text-green-500">{payments.length} payment{payments.length !== 1 ? "s" : ""}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-blue-100 bg-blue-50">
+                    <CardContent className="p-3">
+                      <p className="text-xs font-medium text-blue-600">Active Customers</p>
+                      <p className="text-lg font-bold text-blue-700">{activeCount}</p>
+                      <p className="text-xs text-blue-500">with outstanding balance</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              );
+            })()}
+
             <h2 className="font-semibold text-slate-800 mb-4">All Credit Transactions</h2>
             {allTransactions.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-24 text-slate-400">
