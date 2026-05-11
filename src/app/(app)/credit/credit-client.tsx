@@ -885,19 +885,32 @@ export function CreditClient({
                                     )}
                                   </>
                                 ) : payment ? (
-                                  <div className="text-sm space-y-1 text-slate-600">
-                                    <p><span className="text-slate-400 w-32 inline-block">Method</span>{payment.payment_method === "cash" ? "Cash" : "Mobile Money"}</p>
-                                    <p><span className="text-slate-400 w-32 inline-block">Date</span>{formatDate(payment.payment_date)}</p>
-                                    {payment.collected_at_till && (
-                                      <p><span className="text-slate-400 w-32 inline-block">Till</span>Collected at shop</p>
-                                    )}
-                                    {payment.notes && (
-                                      <p><span className="text-slate-400 w-32 inline-block">Notes</span>{payment.notes}</p>
-                                    )}
-                                    {payment.recorded_by_profile?.full_name && (
-                                      <p><span className="text-slate-400 w-32 inline-block">Recorded by</span>{payment.recorded_by_profile.full_name}</p>
-                                    )}
-                                  </div>
+                                  <table className="w-full text-sm">
+                                    <thead>
+                                      <tr className="text-xs text-slate-500 border-b border-blue-100">
+                                        <th className="text-left pb-2 font-medium">Method</th>
+                                        <th className="text-left pb-2 font-medium px-4">Date</th>
+                                        <th className="text-left pb-2 font-medium px-4">Till</th>
+                                        <th className="text-left pb-2 font-medium px-4">Notes</th>
+                                        <th className="text-left pb-2 font-medium">Recorded By</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      <tr>
+                                        <td className="py-2 pr-4 text-slate-800 font-medium">
+                                          {payment.payment_method === "cash" ? "Cash" : "Mobile Money"}
+                                        </td>
+                                        <td className="py-2 px-4 text-slate-600">{formatDate(payment.payment_date)}</td>
+                                        <td className="py-2 px-4 text-slate-600">
+                                          {payment.collected_at_till
+                                            ? <Badge variant="secondary" className="bg-purple-100 text-purple-700 text-[10px]">Till</Badge>
+                                            : <span className="text-slate-300">—</span>}
+                                        </td>
+                                        <td className="py-2 px-4 text-slate-600">{payment.notes ?? <span className="text-slate-300">—</span>}</td>
+                                        <td className="py-2 text-slate-600">{payment.recorded_by_profile?.full_name ?? <span className="text-slate-300">—</span>}</td>
+                                      </tr>
+                                    </tbody>
+                                  </table>
                                 ) : null}
                               </td>
                             </tr>
