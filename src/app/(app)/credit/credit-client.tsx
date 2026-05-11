@@ -119,14 +119,17 @@ export function CreditClient({
   const { profile } = useProfile();
   const [customers, setCustomers] = useState<Customer[]>(initialCustomers);
   const [payments, setPayments] = useState<CreditPayment[]>(initialPayments);
-  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(
-    initialCustomers[0]?.id ?? null,
-  );
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
   const [ledgerPage, setLedgerPage] = useState(0);
   const [ledgerPageSize, setLedgerPageSize] = useState(25);
+
+  // Aggregate view state (shown when no customer is selected)
+  const [expandedAggregateId, setExpandedAggregateId] = useState<string | null>(null);
+  const [aggregatePage, setAggregatePage] = useState(0);
+  const [aggregatePageSize, setAggregatePageSize] = useState(25);
 
   // Payment dialog
   const [paymentDialog, setPaymentDialog] = useState({
@@ -260,6 +263,44 @@ export function CreditClient({
     () => displayLedger.slice(ledgerPage * ledgerPageSize, (ledgerPage + 1) * ledgerPageSize),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [displayLedger.length, ledgerPage, ledgerPageSize, selectedCustomerId],
+  );
+
+  // All transactions across every customer — newest first — for the landing view
+  const allTransactions = useMemo(() => {
+    const entries: Array<{
+      type: "sale" | "payment";
+      date: string;
+      sortKey: string;
+      id: string;
+      customerId: string;
+      customerName: string;
+      data: CreditSale | CreditPayment;
+    }> = [
+      ...creditSales.map((s) => ({
+        type: "sale" as const,
+        date: s.sale_date,
+        sortKey: s.sale_date + (s.created_at ?? ""),
+        id: s.id,
+        customerId: s.customer_id,
+        customerName: customers.find((c) => c.id === s.customer_id)?.full_name ?? "Unknown",
+        data: s,
+      })),
+      ...payments.map((p) => ({
+        type: "payment" as const,
+        date: p.payment_date,
+        sortKey: p.payment_date + (p.created_at ?? ""),
+        id: p.id,
+        customerId: p.customer_id,
+        customerName: customers.find((c) => c.id === p.customer_id)?.full_name ?? "Unknown",
+        data: p,
+      })),
+    ];
+    return entries.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+  }, [creditSales, payments, customers]);
+
+  const pagedAllTransactions = useMemo(
+    () => allTransactions.slice(aggregatePage * aggregatePageSize, (aggregatePage + 1) * aggregatePageSize),
+    [allTransactions, aggregatePage, aggregatePageSize],
   );
 
   function selectCustomer(id: string) {
@@ -689,10 +730,152 @@ export function CreditClient({
         } flex-1 flex-col overflow-hidden`}
       >
         {!selectedCustomer ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-            <User className="h-12 w-12 mb-3" />
-            <p className="text-lg font-medium">Select a customer</p>
-            <p className="text-sm">View their credit history and record payments</p>
+          /* ── Aggregate: all-customer transaction feed ── */
+          <div className="flex-1 overflow-y-auto p-4 md:p-6">
+            <h2 className="font-semibold text-slate-800 mb-4">All Credit Transactions</h2>
+            {allTransactions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-24 text-slate-400">
+                <User className="h-12 w-12 mb-3" />
+                <p className="text-lg font-medium">No transactions yet</p>
+                <p className="text-sm">Credit sales and payments will appear here</p>
+              </div>
+            ) : (
+              <div className="border rounded-lg overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 border-b">
+                    <tr>
+                      <th className="text-left p-3 font-medium text-slate-600 whitespace-nowrap">Date</th>
+                      <th className="text-left p-3 font-medium text-slate-600">Customer</th>
+                      <th className="text-left p-3 font-medium text-slate-600">Type</th>
+                      <th className="text-left p-3 font-medium text-slate-600">Description</th>
+                      <th className="text-right p-3 font-medium text-slate-600 whitespace-nowrap">Amount</th>
+                      <th className="w-8" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {pagedAllTransactions.map((entry) => {
+                      const isSale = entry.type === "sale";
+                      const sale = isSale ? (entry.data as CreditSale) : null;
+                      const payment = !isSale ? (entry.data as CreditPayment) : null;
+                      const isExpanded = expandedAggregateId === entry.id;
+
+                      return (
+                        <React.Fragment key={entry.id}>
+                          <tr
+                            className={`transition-colors hover:bg-slate-50 cursor-pointer ${isExpanded ? "bg-slate-50" : ""}`}
+                            onClick={() => setExpandedAggregateId(isExpanded ? null : entry.id)}
+                          >
+                            <td className="p-3 text-slate-600 whitespace-nowrap">
+                              {formatDate(entry.date)}
+                            </td>
+                            <td className="p-3 font-medium text-slate-800">
+                              {entry.customerName}
+                            </td>
+                            <td className="p-3">
+                              {isSale
+                                ? <Badge variant="secondary" className="bg-slate-100 text-slate-700">Sale</Badge>
+                                : <Badge variant="secondary" className="bg-green-100 text-green-700">Payment</Badge>
+                              }
+                            </td>
+                            <td className="p-3 text-slate-600">
+                              {isSale && sale ? (
+                                <span>
+                                  {(sale.items ?? []).map((i) => i.product?.name).filter(Boolean).slice(0, 3).join(", ")}
+                                  {(sale.items ?? []).length > 3 && (
+                                    <span className="text-slate-400"> +{(sale.items ?? []).length - 3} more</span>
+                                  )}
+                                </span>
+                              ) : payment ? (
+                                <span className="flex items-center gap-2 flex-wrap">
+                                  <span>{payment.payment_method === "cash" ? "Cash" : "Mobile Money"}</span>
+                                  {payment.collected_at_till && (
+                                    <Badge variant="secondary" className="bg-purple-100 text-purple-700 text-[10px]">Till</Badge>
+                                  )}
+                                  {payment.notes && (
+                                    <span className="text-slate-400 text-xs">· {payment.notes}</span>
+                                  )}
+                                </span>
+                              ) : null}
+                            </td>
+                            <td className={`p-3 text-right font-medium whitespace-nowrap ${isSale ? "text-red-600" : "text-green-600"}`}>
+                              {isSale ? formatCurrency(sale!.total_amount) : formatCurrency(payment!.amount)}
+                            </td>
+                            <td className="p-3 text-center text-slate-300">
+                              {isExpanded ? <ChevronUp className="h-4 w-4 inline" /> : <ChevronDown className="h-4 w-4 inline" />}
+                            </td>
+                          </tr>
+
+                          {/* Expanded row */}
+                          {isExpanded && (
+                            <tr>
+                              <td colSpan={6} className="bg-blue-50/40 px-6 py-4 border-b border-blue-100">
+                                {isSale && sale ? (
+                                  <>
+                                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-3">
+                                      Items in this sale
+                                    </p>
+                                    <table className="w-full text-sm">
+                                      <thead>
+                                        <tr className="text-xs text-slate-500 border-b border-blue-100">
+                                          <th className="text-left pb-2 font-medium">Product</th>
+                                          <th className="text-left pb-2 font-medium px-4">Qty</th>
+                                          <th className="text-right pb-2 font-medium px-4">Unit Price</th>
+                                          <th className="text-right pb-2 font-medium px-4">Discount</th>
+                                          <th className="text-right pb-2 font-medium">Line Total</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {(sale.items ?? []).map((item) => (
+                                          <tr key={item.id} className="border-b border-blue-50 last:border-0">
+                                            <td className="py-2 pr-4 text-slate-800 font-medium">{item.product?.name ?? "—"}</td>
+                                            <td className="py-2 px-4 text-slate-600">{formatItemQty(item)}</td>
+                                            <td className="py-2 px-4 text-right text-slate-600">{formatCurrency(item.unit_price)}</td>
+                                            <td className="py-2 px-4 text-right text-slate-400">
+                                              {item.discount_amount > 0 ? `−${formatCurrency(item.discount_amount)}` : "—"}
+                                            </td>
+                                            <td className="py-2 text-right font-semibold text-slate-800">{formatCurrency(item.line_total)}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                    {sale.recorded_by_profile?.full_name && (
+                                      <p className="text-xs text-slate-400 mt-3">
+                                        Recorded by {sale.recorded_by_profile.full_name}
+                                      </p>
+                                    )}
+                                  </>
+                                ) : payment ? (
+                                  <div className="text-sm space-y-1 text-slate-600">
+                                    <p><span className="text-slate-400 w-32 inline-block">Method</span>{payment.payment_method === "cash" ? "Cash" : "Mobile Money"}</p>
+                                    <p><span className="text-slate-400 w-32 inline-block">Date</span>{formatDate(payment.payment_date)}</p>
+                                    {payment.collected_at_till && (
+                                      <p><span className="text-slate-400 w-32 inline-block">Till</span>Collected at shop</p>
+                                    )}
+                                    {payment.notes && (
+                                      <p><span className="text-slate-400 w-32 inline-block">Notes</span>{payment.notes}</p>
+                                    )}
+                                    {payment.recorded_by_profile?.full_name && (
+                                      <p><span className="text-slate-400 w-32 inline-block">Recorded by</span>{payment.recorded_by_profile.full_name}</p>
+                                    )}
+                                  </div>
+                                ) : null}
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <TablePagination
+                  total={allTransactions.length}
+                  page={aggregatePage}
+                  pageSize={aggregatePageSize}
+                  onPageChange={(p) => { setAggregatePage(p); setExpandedAggregateId(null); }}
+                  onPageSizeChange={(s) => { setAggregatePageSize(s); setAggregatePage(0); setExpandedAggregateId(null); }}
+                />
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
