@@ -22,6 +22,9 @@ import {
   parseISO,
   startOfMonth,
   endOfMonth,
+  startOfWeek,
+  endOfWeek,
+  subWeeks,
   subMonths,
   differenceInDays,
   getDay,
@@ -89,10 +92,9 @@ interface ReconRecord {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function itemCOGS(item: SaleItem): number {
-  const qty =
-    (item.quantity_kg || 0) +
-    (item.quantity_units || 0) +
-    (item.quantity_boxes || 0);
+  // Use only the primary quantity field — adding all three overcounts when
+  // boxes are sold alongside kg/units (both fields are set simultaneously).
+  const qty = item.quantity_kg || item.quantity_units || item.quantity_boxes || 0;
   return qty * (item.cost_price_at_sale || 0);
 }
 
@@ -177,12 +179,12 @@ export function ReportsClient({
         to: format(subDays(today, 1), "yyyy-MM-dd"),
       },
       this_week: {
-        from: format(subDays(today, 6), "yyyy-MM-dd"),
+        from: format(startOfWeek(today, { weekStartsOn: 1 }), "yyyy-MM-dd"),
         to: todayStr,
       },
       last_week: {
-        from: format(subDays(today, 13), "yyyy-MM-dd"),
-        to: format(subDays(today, 7), "yyyy-MM-dd"),
+        from: format(startOfWeek(subWeeks(today, 1), { weekStartsOn: 1 }), "yyyy-MM-dd"),
+        to: format(endOfWeek(subWeeks(today, 1), { weekStartsOn: 1 }), "yyyy-MM-dd"),
       },
       this_month: {
         from: format(startOfMonth(today), "yyyy-MM-dd"),
@@ -426,9 +428,7 @@ export function ReportsClient({
       byProduct[item.product_id].revenue += item.line_total;
       byProduct[item.product_id].cogs += itemCOGS(item);
       byProduct[item.product_id].qty +=
-        (item.quantity_kg || 0) +
-        (item.quantity_units || 0) +
-        (item.quantity_boxes || 0);
+        item.quantity_kg || item.quantity_units || item.quantity_boxes || 0;
     });
     const result = Object.values(byProduct).map((p) => ({
       ...p,
@@ -814,7 +814,7 @@ export function ReportsClient({
                       {formatCurrency(Math.max(0, creditOutstanding))}
                     </p>
                     <p className="text-xs text-slate-400">
-                      unpaid across all customers
+                      all-time · unpaid across all customers
                     </p>
                   </div>
                 </CardContent>

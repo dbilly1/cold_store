@@ -53,7 +53,9 @@ interface ProductSummary {
 // ── Helpers ────────────────────────────────────────────────────
 
 function itemQty(item: SaleItemRow): number {
-  return (item.quantity_kg || 0) + (item.quantity_units || 0) + (item.quantity_boxes || 0);
+  // Use only the primary quantity field — adding all three overcounts when
+  // boxes are sold alongside kg/units (both fields are set simultaneously).
+  return item.quantity_kg || item.quantity_units || item.quantity_boxes || 0;
 }
 
 function fmtQty(qty: number, unitType: string): string {
