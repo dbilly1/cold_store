@@ -27,6 +27,8 @@ interface SaleItemRow {
   quantity_units: number;
   quantity_boxes: number;
   line_total: number;
+  unit_price: number;
+  discount_amount: number;
   cost_price_at_sale: number;
   product: ProductMeta | null;
 }
@@ -53,9 +55,12 @@ interface ProductSummary {
 // ── Helpers ────────────────────────────────────────────────────
 
 function itemQty(item: SaleItemRow): number {
-  // Use only the primary quantity field — adding all three overcounts when
-  // boxes are sold alongside kg/units (both fields are set simultaneously).
-  return item.quantity_kg || item.quantity_units || item.quantity_boxes || 0;
+  // Derive true total quantity from line_total so box conversions are included:
+  // line_total = (direct_qty + boxes × upb) × unit_price − discount
+  // → total_qty = (line_total + discount_amount) / unit_price
+  if (!item.unit_price || item.unit_price === 0)
+    return item.quantity_kg || item.quantity_units || item.quantity_boxes || 0;
+  return (item.line_total + (item.discount_amount || 0)) / item.unit_price;
 }
 
 function fmtQty(qty: number, unitType: string): string {
@@ -115,7 +120,7 @@ export function SalesHistoryClient({ embedded = false }: { embedded?: boolean })
         id, sale_date, payment_method,
         sale_items(
           quantity_kg, quantity_units, quantity_boxes,
-          line_total, cost_price_at_sale,
+          line_total, unit_price, discount_amount, cost_price_at_sale,
           product:products(id, name, unit_type)
         )
       `)

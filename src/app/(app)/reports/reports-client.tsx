@@ -46,6 +46,8 @@ import {
 
 interface SaleItem {
   line_total: number;
+  unit_price: number;
+  discount_amount: number;
   cost_price_at_sale: number;
   quantity_kg: number;
   quantity_units: number;
@@ -71,6 +73,8 @@ interface ProductSaleRecord {
   quantity_units: number;
   quantity_boxes: number;
   line_total: number;
+  unit_price: number;
+  discount_amount: number;
   cost_price_at_sale: number;
   product: { name: string; unit_type: string } | null;
 }
@@ -92,10 +96,12 @@ interface ReconRecord {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function itemCOGS(item: SaleItem): number {
-  // Use only the primary quantity field — adding all three overcounts when
-  // boxes are sold alongside kg/units (both fields are set simultaneously).
-  const qty = item.quantity_kg || item.quantity_units || item.quantity_boxes || 0;
-  return qty * (item.cost_price_at_sale || 0);
+  // Derive true total quantity from line_total so that box conversions are
+  // included: line_total = (direct_qty + boxes × upb) × unit_price − discount
+  // Reversing gives: total_qty = (line_total + discount_amount) / unit_price
+  if (!item.unit_price || item.unit_price === 0) return 0;
+  const totalQty = (item.line_total + (item.discount_amount || 0)) / item.unit_price;
+  return totalQty * (item.cost_price_at_sale || 0);
 }
 
 function qtyLabel(qty: number, unitType: string): string {
@@ -428,7 +434,9 @@ export function ReportsClient({
       byProduct[item.product_id].revenue += item.line_total;
       byProduct[item.product_id].cogs += itemCOGS(item);
       byProduct[item.product_id].qty +=
-        item.quantity_kg || item.quantity_units || item.quantity_boxes || 0;
+        item.unit_price > 0
+          ? (item.line_total + (item.discount_amount || 0)) / item.unit_price
+          : item.quantity_kg || item.quantity_units || item.quantity_boxes || 0;
     });
     const result = Object.values(byProduct).map((p) => ({
       ...p,

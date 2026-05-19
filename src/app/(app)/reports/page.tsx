@@ -21,11 +21,11 @@ export default async function ReportsPage() {
     { data: allTimeCreditSalesData },
     { data: allTimeCreditPaidData },
   ] = await Promise.all([
-    // Sales — include quantity_boxes for correct COGS; include payment_method for split
+    // Sales — include unit_price + discount_amount to derive true total qty for COGS
     supabase
       .from("sales")
       .select(
-        "sale_date, total_amount, payment_method, items:sale_items(line_total, cost_price_at_sale, quantity_kg, quantity_units, quantity_boxes)",
+        "sale_date, total_amount, payment_method, items:sale_items(line_total, unit_price, discount_amount, cost_price_at_sale, quantity_kg, quantity_units, quantity_boxes)",
       )
       .gte("sale_date", oneYearAgo)
       .eq("is_deleted", false)
@@ -44,7 +44,7 @@ export default async function ReportsPage() {
     supabase
       .from("sale_items")
       .select(
-        `product_id, quantity_kg, quantity_units, quantity_boxes, line_total, cost_price_at_sale,
+        `product_id, quantity_kg, quantity_units, quantity_boxes, line_total, unit_price, discount_amount, cost_price_at_sale,
          product:products(name, unit_type),
          sale:sales!inner(sale_date, is_deleted, payment_method)`,
       )
