@@ -45,6 +45,8 @@ export default async function ProductDetailPage({
       .eq("product_id", id)
       .order("created_at", { ascending: false }),
 
+    // Fetch without dot-notation ordering (unsupported on foreign columns).
+    // Date filter and sort are handled client-side.
     supabase
       .from("sale_items")
       .select(`
@@ -55,8 +57,7 @@ export default async function ProductDetailPage({
       .eq("product_id", id)
       .eq("sale.is_deleted" as never, false)
       .gte("sale.sale_date" as never, oneYearAgo)
-      .order("sale.sale_date" as never, { ascending: false })
-      .limit(2000),
+      .limit(5000),
   ]);
 
   if (!product) notFound();
