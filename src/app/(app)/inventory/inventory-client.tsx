@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProfile } from "@/hooks/use-profile";
@@ -113,6 +114,7 @@ function isLowStock(p: Product) {
 export function InventoryClient({ products: initial, categories }: { products: Product[]; categories: Category[] }) {
   const { toast } = useToast();
   const { profile } = useProfile();
+  const router = useRouter();
   const [products, setProducts] = useState<Product[]>(initial);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortOption>("name-asc");
@@ -591,7 +593,11 @@ export function InventoryClient({ products: initial, categories }: { products: P
                 : "—";
 
               return (
-                <tr key={product.id} className="hover:bg-slate-50">
+                <tr
+                  key={product.id}
+                  className="hover:bg-slate-50 cursor-pointer"
+                  onClick={() => router.push(`/inventory/${product.id}`)}
+                >
                   <td className="p-3">
                     <p className="font-medium">{product.name}</p>
                     <p className="text-xs text-slate-400 capitalize">{product.unit_type}</p>
@@ -622,7 +628,7 @@ export function InventoryClient({ products: initial, categories }: { products: P
                     {low ? <Badge variant="destructive">Low</Badge> : <Badge variant="success">OK</Badge>}
                   </td>
                   {canEdit && (
-                    <td className="p-3">
+                    <td className="p-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-center gap-1">
                         <Button size="sm" variant="ghost" title="Price history" onClick={() => openPriceHistory(product)}>
                           <History className="h-3.5 w-3.5 text-blue-400" />
