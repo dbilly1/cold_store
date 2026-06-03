@@ -200,7 +200,7 @@ export function ProductDetailClient({
   const [preset, setPreset]           = useState<RangePreset>("this_month");
   const [customFrom, setCustomFrom]   = useState("");
   const [customTo, setCustomTo]       = useState("");
-  const [chartType, setChartType]     = useState<"line" | "bar">("line");
+  const [chartType, setChartType]     = useState<"line" | "bar">("bar");
   const [salesPage, setSalesPage]     = useState(0);
   const [salesPageSize, setSalesPageSize] = useState(10);
 
@@ -274,12 +274,12 @@ export function ProductDetailClient({
     : null;
   const low = isLowStock(product);
 
-  const presets: { label: string; value: RangePreset }[] = [
-    { label: "This Week",  value: "this_week"  },
-    { label: "Last Week",  value: "last_week"  },
-    { label: "This Month", value: "this_month" },
-    { label: "Last Month", value: "last_month" },
-    { label: "Custom",     value: "custom"     },
+  const presets: { label: string; shortLabel: string; value: RangePreset }[] = [
+    { label: "This Week",  shortLabel: "Wk",    value: "this_week"  },
+    { label: "Last Week",  shortLabel: "L.Wk",  value: "last_week"  },
+    { label: "This Month", shortLabel: "Mo",    value: "this_month" },
+    { label: "Last Month", shortLabel: "L.Mo",  value: "last_month" },
+    { label: "Custom",     shortLabel: "Range", value: "custom"     },
   ];
 
   const unitLabel = product.unit_type === "kg" ? "kg"
@@ -303,7 +303,7 @@ export function ProductDetailClient({
           </Button>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold text-slate-800">{product.name}</h1>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-800">{product.name}</h1>
               {low && (
                 <Badge variant="destructive" className="text-xs">
                   <AlertTriangle className="h-3 w-3 mr-1" />
@@ -380,7 +380,7 @@ export function ProductDetailClient({
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="col-span-2 sm:col-span-1">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-1">
               <Clock className="h-4 w-4 text-amber-500" />
@@ -446,10 +446,11 @@ export function ProductDetailClient({
                       key={p.value}
                       size="sm"
                       variant={preset === p.value ? "default" : "outline"}
-                      className="h-7 text-xs px-3"
+                      className="h-7 text-xs px-2.5"
                       onClick={() => setPreset(p.value)}
                     >
-                      {p.label}
+                      <span className="sm:hidden">{p.shortLabel}</span>
+                      <span className="hidden sm:inline">{p.label}</span>
                     </Button>
                   ))}
                 </div>
@@ -475,7 +476,7 @@ export function ProductDetailClient({
 
             <CardContent>
               {/* Period summary */}
-              <div className="grid grid-cols-3 gap-3 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
                 <div className="rounded-lg bg-slate-50 border p-3">
                   <p className="text-xs text-slate-500 mb-0.5">Revenue</p>
                   <p className="text-lg font-bold text-slate-800">{formatCurrency(summary.revenue)}</p>
